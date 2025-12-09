@@ -1,0 +1,1316 @@
+import { useState, useEffect, useRef } from 'react'
+import { Settings } from 'lucide-react';
+import { aiService } from './services/aiService';
+import { evaluateMath } from './utils/calculator';
+
+import * as Vosk from 'vosk-browser';
+import { Header } from './components/Header';
+import { InputArea } from './components/InputArea';
+import { HistoryList, type HistoryItem } from './components/HistoryList';
+import { SettingsModal } from './components/SettingsModal';
+
+function App() {
+  const [inputText, setInputText] = useState('')
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [activeTab, setActiveTab] = useState<'chat' | 'clipboard' | 'transcription'>('chat');
+  const historyEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [isClipboardEnabled, setIsClipboardEnabled] = useState(true)
+  const [showSettings, setShowSettings] = useState(false)
+
+  // Settings State
+  const [apiKey, setApiKey] = useState('') // Legacy/Fallback
+  const [geminiApiKey, setGeminiApiKey] = useState('')
+  const [geminiModelName, setGeminiModelName] = useState('gemini-2.0-flash');
+  const [groqApiKey, setGroqApiKey] = useState('');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+
+  const [themeColor, setThemeColor] = useState('#ef4444');
+  const [logDirectory, setLogDirectory] = useState('');
+  const [provider, setProvider] = useState<'gemini' | 'local' | 'openai'>('gemini');
+  const [localBaseUrl, setLocalBaseUrl] = useState('http://localhost:11434/v1');
+  const [localModelName, setLocalModelName] = useState('llama3');
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.x.ai/v1');
+  const [openaiModelName, setOpenaiModelName] = useState('grok-beta');
+  const [targetLanguage, setTargetLanguage] = useState('Japanese');
+  const [skinId, setSkinId] = useState('default');
+  const [isConversationMode, setIsConversationMode] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [additionalPrompt, setAdditionalPrompt] = useState('');
+
+  // TTS Settings
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsProvider, setTtsProvider] = useState<'browser' | 'openai' | 'voicevox'>('browser');
+  const [ttsVoice, setTtsVoice] = useState('alloy'); // Default for OpenAI, or use index/name for others
+  const [ttsSummaryPrompt, setTtsSummaryPrompt] = useState('Summarize the following text in under 400 characters for speech.');
+  const [ttsSummaryThreshold, setTtsSummaryThreshold] = useState(400);
+
+  // Audio/Voice Settings
+  const [inputDeviceId, setInputDeviceId] = useState('default');
+  const [wakeWord, setWakeWord] = useState('ニコ');
+  const [voiceInputEnabled, setVoiceInputEnabled] = useState(false);
+  const [wakeWordTimeout, setWakeWordTimeout] = useState(2); // Seconds
+  const [transcriptionProvider, setTranscriptionProvider] = useState<'native' | 'openai' | 'local' | 'vosk' | 'groq'>('vosk');
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const voskModelRef = useRef<Vosk.Model | null>(null);
+  const voskRecognizerRef = useRef<Vosk.KaldiRecognizer | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const voskLastPartialRef = useRef<string>("");
+  const [isSpeaking, setIsSpeaking] = useState(false); // For Conditional Stop Button
+
+  // Refs for stale closure prevention
+  // Refs for stale closure prevention
+  const ttsEnabledRef = useRef(ttsEnabled);
+  const ttsProviderRef = useRef(ttsProvider);
+  const ttsSummaryPromptRef = useRef(ttsSummaryPrompt);
+  const ttsSummaryThresholdRef = useRef(ttsSummaryThreshold);
+
+  useEffect(() => {
+    ttsEnabledRef.current = ttsEnabled;
+  }, [ttsEnabled]);
+
+  useEffect(() => {
+    ttsProviderRef.current = ttsProvider;
+  }, [ttsProvider]);
+
+  useEffect(() => {
+    ttsSummaryPromptRef.current = ttsSummaryPrompt;
+  }, [ttsSummaryPrompt]);
+
+  useEffect(() => {
+    ttsSummaryThresholdRef.current = ttsSummaryThreshold;
+  }, [ttsSummaryThreshold]);
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [isWakeWordActive, setIsWakeWordActive] = useState(false);
+
+  const [appVersion, setAppVersion] = useState('0.1.9.2');
+
+  const isClipboardEnabledRef = useRef(isClipboardEnabled);
+
+  // Update ref when state changes
+  useEffect(() => {
+    isClipboardEnabledRef.current = isClipboardEnabled;
+  }, [isClipboardEnabled]);
+
+  const isRecordingRef = useRef(isRecording);
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    // Load settings - Run ONCE on mount
+    if (window.electronAPI) {
+      // Ensure any previous TTS is cancelled on startup
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+      window.electronAPI.getSettings().then(settings => {
+        if (window.electronAPI.log) window.electronAPI.log(`Settings loaded: ${JSON.stringify(settings)}`);
+        if (settings) {
+          setApiKey(settings.apiKey || '');
+          setGeminiApiKey(settings.geminiApiKey || '');
+          setGeminiModelName(settings.geminiModelName || 'gemini-2.0-flash');
+          setGroqApiKey(settings.groqApiKey || '');
+          setOpenaiApiKey(settings.openaiApiKey || '');
+
+          setIsClipboardEnabled(settings.isClipboardEnabled !== undefined ? settings.isClipboardEnabled : true);
+          if (settings.themeColor) setThemeColor(settings.themeColor);
+          if (settings.targetLanguage) setTargetLanguage(settings.targetLanguage);
+          if (settings.skinId) setSkinId(settings.skinId);
+          if (settings.systemPrompt) setSystemPrompt(settings.systemPrompt);
+          if (settings.additionalPrompt) setAdditionalPrompt(settings.additionalPrompt);
+
+          if (settings.ttsEnabled !== undefined) setTtsEnabled(settings.ttsEnabled);
+          if (settings.ttsProvider) setTtsProvider(settings.ttsProvider);
+          if (settings.ttsVoice) setTtsVoice(settings.ttsVoice);
+          if (settings.ttsSummaryPrompt) setTtsSummaryPrompt(settings.ttsSummaryPrompt);
+          if (settings.ttsSummaryThreshold !== undefined) setTtsSummaryThreshold(settings.ttsSummaryThreshold);
+
+          if (settings.inputDeviceId) setInputDeviceId(settings.inputDeviceId);
+          if (settings.wakeWord) setWakeWord(settings.wakeWord);
+          if (settings.voiceInputEnabled !== undefined) setVoiceInputEnabled(settings.voiceInputEnabled);
+          if (settings.transcriptionProvider) setTranscriptionProvider(settings.transcriptionProvider);
+          if (settings.wakeWordTimeout) setWakeWordTimeout(settings.wakeWordTimeout);
+          if (settings.developerMode !== undefined) setDeveloperMode(settings.developerMode);
+
+          if (settings.provider) setProvider(settings.provider);
+
+          // AI Settings
+          setProvider(settings.provider || 'gemini');
+
+          setLocalBaseUrl(settings.localBaseUrl || 'http://localhost:11434/v1');
+          setLocalModelName(settings.localModelName || 'llama3');
+          setOpenaiBaseUrl(settings.openaiBaseUrl || 'https://api.x.ai/v1');
+          setOpenaiModelName(settings.openaiModelName || 'grok-beta');
+
+          // Initialize AI Service
+          aiService.updateSettings(settings);
+
+          // Load Skin via Context if we could access it here
+          if (window.electronAPI.loadSkin && settings.skinId) {
+            window.electronAPI.loadSkin(settings.skinId);
+          }
+        }
+      });
+
+      window.electronAPI.getLogDirectory().then(dir => setLogDirectory(dir));
+      // Get version
+      window.electronAPI.getAppVersion().then(setAppVersion);
+
+      // Load history
+      window.electronAPI.getHistory().then(initialHistory => {
+        if (initialHistory && initialHistory.length > 0) {
+          const migratedHistory = initialHistory.map((item: any) => ({
+            ...item,
+            category: item.category || (item.type === 'clipboard' ? 'clipboard' : 'chat')
+          }));
+          setHistory(migratedHistory);
+        }
+      });
+    }
+  }, []); // Run once
+
+  // Clipboard Listener
+  useEffect(() => {
+    if (window.electronAPI) {
+      const cleanup = window.electronAPI.onClipboardUpdated((newItem) => {
+        if (!isClipboardEnabledRef.current) return;
+
+        setHistory(prev => {
+          if (prev.some(p => p.id === newItem.id || (p.content === newItem.content && p.type === 'clipboard'))) {
+            return prev;
+          }
+          const itemWithCategory: HistoryItem = {
+            ...newItem,
+            category: 'clipboard',
+            id: Date.now().toString() + Math.random().toString(36).substring(2, 9)
+          };
+          handleAutoProcess(itemWithCategory.content);
+          return [...prev, itemWithCategory];
+        });
+      });
+      return () => cleanup();
+    }
+  }, []);
+
+  // Save Settings when changed
+  useEffect(() => {
+    if (window.electronAPI) {
+      const settingsToSave = {
+        apiKey,
+        geminiApiKey,
+        geminiModelName,
+        openaiApiKey,
+        isClipboardEnabled,
+        themeColor,
+        targetLanguage,
+        skinId,
+        provider,
+        localBaseUrl,
+        localModelName,
+        openaiBaseUrl,
+        openaiModelName,
+        systemPrompt,
+        additionalPrompt,
+        ttsEnabled,
+        ttsProvider,
+        ttsVoice,
+        ttsSummaryPrompt,
+        inputDeviceId,
+        wakeWord,
+        voiceInputEnabled,
+        transcriptionProvider,
+        wakeWordTimeout,
+        developerMode
+      };
+      window.electronAPI.saveSettings(settingsToSave);
+      aiService.updateSettings(settingsToSave);
+    }
+  }, [apiKey, geminiApiKey, geminiModelName, openaiApiKey, isClipboardEnabled, themeColor, targetLanguage, skinId, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName, systemPrompt, additionalPrompt, ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider, wakeWordTimeout, developerMode]); // Added new dependencies
+
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [history, activeTab]);
+
+  useEffect(() => {
+    if (!isProcessing && activeTab === 'chat' && !showSettings) {
+      if (document.hasFocus()) {
+        setTimeout(() => {
+          inputRef.current?.focus();
+        }, 10);
+      }
+    }
+  }, [isProcessing, activeTab, showSettings]);
+
+  useEffect(() => {
+    if (window.electronAPI) {
+      const cleanup = window.electronAPI.onFocusInput(() => {
+        setTimeout(() => {
+          inputRef.current?.focus();
+        }, 50);
+      });
+      return cleanup;
+    }
+  }, []);
+
+  // Voice Recognition Logic
+  useEffect(() => {
+    // Only run if supported and enabled
+    // Only run if supported and enabled AND using native provider
+    if (!('webkitSpeechRecognition' in window)) {
+      return;
+    }
+
+    if (!voiceInputEnabled || transcriptionProvider !== 'native') {
+      // Stop native if it was running? The cleanup does that.
+      // This ensures we don't hog the mic if using Vosk/OpenAI
+      return;
+    }
+
+    // @ts-ignore
+    const recognition = new window.webkitSpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = targetLanguage === 'Japanese' ? 'ja-JP' : (targetLanguage === 'English' ? 'en-US' : 'en-US'); // Dynamic language based on target
+
+    recognition.onstart = () => {
+      console.log("Voice recognition started. Listening for wake word:", wakeWord);
+    };
+
+    recognition.onresult = (event: any) => {
+      const lastResultIndex = event.results.length - 1;
+      const transcript = event.results[lastResultIndex][0].transcript.trim();
+      const isFinal = event.results[lastResultIndex].isFinal;
+
+      // Log to Transcription Tab (if final)
+      if (transcript && isFinal) {
+        setHistory(prev => [...prev, {
+          id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+          type: 'system',
+          content: transcript,
+          timestamp: new Date().toISOString(),
+          category: 'transcription',
+          isMasked: false
+        }]);
+      }
+
+      // Developer Mode Logging
+      if (developerMode && transcript && isFinal && !isProcessing) {
+        setHistory(prev => [...prev, {
+          id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+          type: 'system',
+          content: `[🎤 DEBUG]: ${transcript}`,
+          timestamp: new Date().toISOString(),
+          category: 'chat',
+          isMasked: true
+        }]);
+      }
+
+      if (transcript.toLowerCase().includes(wakeWord.toLowerCase())) {
+        console.log("Wake word detected!");
+        if (window.electronAPI) window.electronAPI.log(`Wake word detected: ${transcript}`);
+
+        setIsWakeWordActive(true);
+        setTimeout(() => setIsWakeWordActive(false), 2000);
+
+        // Extract command (naive approach: everything after wake word?)
+        // Or just send whole thing? The previous code did substring.
+        // Let's keep strict substring if it starts with it?
+        // Actually, 'includes' allows mid-sentence wake word. 
+        // Let's fallback to strict 'startsWith' for cleaner command extraction if we can,
+        // or just use the whole text if it's simple.
+        // Previous logic: startsWith.
+        // New logic in handleMicClick was 'includes'. I'll stick to 'startsWith' for continuous to avoid accidental triggers?
+        // But user might say "Hey Computer do X".
+        // Let's use includes check but extract optimally.
+
+        // Use logic consistent with previous implementation: 
+        const lowerTranscript = transcript.toLowerCase();
+        const lowerWakeWord = wakeWord.toLowerCase();
+        const wakeWordIndex = lowerTranscript.indexOf(lowerWakeWord);
+
+        if (wakeWordIndex !== -1) {
+          const command = transcript.substring(wakeWordIndex + wakeWord.length).trim();
+          if (command) {
+            handleExecute(command, true);
+          }
+        }
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error", event.error);
+    };
+
+    recognition.onend = () => {
+      // Restart if strictly infinite listening desired
+      // But check if we are still enabled. 
+      // In this useEffect closure, 'voiceInputEnabled' is true.
+      // But if effect cleanup ran, 'recognition.onend' might still fire.
+      // Simple restart:
+      try {
+        recognition.start();
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error(e);
+    }
+
+    return () => {
+      recognition.onend = null; // Prevent restart loop
+      recognition.stop();
+    };
+  }, [wakeWord, voiceInputEnabled, transcriptionProvider]); // Re-run if wakeWord, enabled status, or provider changes
+
+  const handleAutoProcess = async (text: string) => {
+    if (!text.trim()) return;
+
+    const urlRegex = /^(http|https):\/\/[^ "]+$/;
+    if (urlRegex.test(text)) {
+      try {
+        if (window.electronAPI) {
+          const metadata = await window.electronAPI.fetchUrlMetadata(text);
+          const content = `[URL] ${text}\n${metadata.title ? `Title: ${metadata.title}` : ''}${metadata.description ? `\nDescription: ${metadata.description}` : ''}`;
+          const responseItem: HistoryItem = {
+            id: Date.now().toString(),
+            type: 'system',
+            content: content.trim(),
+            timestamp: new Date().toISOString(),
+            category: 'clipboard'
+          };
+          setHistory(prev => [...prev, responseItem]);
+          if (window.electronAPI) {
+            window.electronAPI.addHistory(responseItem);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch URL metadata:", error);
+      }
+      return;
+    }
+
+    // Auto check if we should translate
+    const effectiveKey = provider === 'gemini' ? (geminiApiKey || apiKey) : (provider === 'openai' ? openaiApiKey : 'local');
+    if (!aiService.hasKey() && provider !== 'local' && !effectiveKey) {
+      return;
+    }
+
+    try {
+      const smartTranslatePrompt = `
+You are a translator.
+Target Language: ${targetLanguage}
+Input: "${text}"
+Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATION_NEEDED". Otherwise, translate it to ${targetLanguage}.
+`;
+      const result = await aiService.generateText(smartTranslatePrompt);
+
+      if (!result.includes("NO_TRANSLATION_NEEDED")) {
+        const responseItem: HistoryItem = {
+          id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+          type: 'response',
+          content: `Translated: ${result}`,
+          timestamp: new Date().toISOString(),
+          category: 'clipboard'
+        };
+        setHistory(prev => [...prev, responseItem]);
+      }
+    } catch (error: any) {
+      console.error("Auto-translation failed:", error);
+    }
+  };
+
+
+
+  // Vosk Lifecycle Management (Continuous Background for Wake Word)
+  useEffect(() => {
+    // Run if voice input is enabled (Regardless of Transcription Provider)
+    if (!voiceInputEnabled) {
+      // Cleanup if switching away
+      if (voskRecognizerRef.current) {
+        try {
+          audioContextRef.current?.close();
+          processorRef.current?.disconnect();
+          sourceRef.current?.disconnect();
+        } catch (e) { console.error("Vosk Cleanup Error", e); }
+        voskRecognizerRef.current = null;
+        audioContextRef.current = null;
+        sourceRef.current = null;
+        processorRef.current = null;
+        if (window.electronAPI) window.electronAPI.log("Vosk Stopped (Background)");
+      }
+      return;
+    }
+
+    // Attempt to start Vosk
+    const startVosk = async () => {
+      try {
+        if (window.electronAPI) window.electronAPI.log("Starting Vosk Background Listener...");
+
+        // 1. Load Model (Singleton-ish check)
+        if (!voskModelRef.current) {
+          if (window.electronAPI) window.electronAPI.log("Loading Vosk Model...");
+          const modelUrl = "/vosk-models/vosk-model-small-ja-0.22.zip";
+          const model = await Vosk.createModel(modelUrl);
+          voskModelRef.current = model;
+        }
+
+        const model = voskModelRef.current;
+        if (!model) return; // Should not happen
+
+        // 2. Setup Audio
+        // Check if existing context?
+        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+          // Already running?
+          return;
+        }
+
+        const audioContext = new AudioContext();
+        audioContextRef.current = audioContext;
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            deviceId: inputDeviceId && inputDeviceId !== 'default' ? { exact: inputDeviceId } : undefined,
+            echoCancellation: true,
+            noiseSuppression: true,
+            channelCount: 1,
+            sampleRate: 16000
+          }
+        });
+
+        const source = audioContext.createMediaStreamSource(stream);
+        sourceRef.current = source;
+
+        const recognizer = new model.KaldiRecognizer(audioContext.sampleRate);
+        voskRecognizerRef.current = recognizer;
+
+        // 3. Logic: Result vs Partial
+        recognizer.on("result", (message: any) => {
+          const text = message.result.text;
+          if (text) {
+            // Log EVERYTHING to Transcription Area
+            setHistory(prev => [...prev, {
+              id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+              type: 'system',
+              content: text,
+              timestamp: new Date().toISOString(),
+              category: 'transcription',
+              isMasked: false
+            }]);
+
+            // Execution Logic
+            if (isRecordingRef.current) {
+              // If we are Manually Recording, check who is handling verification.
+              // If Transcription Provider is VOSK, we use this stream.
+              // If it is Groq/OpenAI, we ignore Vosk results (MediaRecorder handles it).
+              if (transcriptionProvider === 'vosk') {
+                handleExecute(text, true);
+              }
+            } else {
+              // Background Mode: Wake Word Only
+              if (text.toLowerCase().includes(wakeWord.toLowerCase())) {
+                const lowerTranscript = text.toLowerCase();
+                const lowerWakeWord = wakeWord.toLowerCase();
+                const wakeWordIndex = lowerTranscript.indexOf(lowerWakeWord);
+
+                if (wakeWordIndex !== -1) {
+                  // VOSK detected wake word.
+                  // Hybrid Approach:
+                  // 1. Acknowledge Wake Word
+                  if (window.electronAPI) window.electronAPI.log(`Wake Word Detected (Background): ${text}`);
+                  setIsWakeWordActive(true);
+
+                  // 2. Start Recording High-Quality Audio for Gemini
+                  // We do NOT use the text AFTER the wake word from Vosk, because Vosk is less accurate.
+                  // Instead, we start a dedicated recording session.
+                  startListeningForCommand();
+                }
+              }
+            }
+            voskLastPartialRef.current = "";
+          }
+        });
+
+        recognizer.on("partialresult", (message: any) => {
+          const partial = message.result.partial;
+          if (partial) {
+            voskLastPartialRef.current = partial;
+
+            // Optional: Immediate Wake Word Feedback during partial?
+            // If we want "Green Flash" as soon as "Nico" is heard, even if sentence isn't done.
+            // Currently implemented in "Final" or "Stop". 
+            // Adding minimal check here for feedback ONLY
+            if (partial.toLowerCase().includes(wakeWord.toLowerCase()) && !isWakeWordActive) {
+              setIsWakeWordActive(true); // Just visual
+              // Don't execute yet, wait for final or silence? 
+              // Or execute if we want really fast response?
+              // Let's stick to Final for stability, but visual feedback is nice.
+              setTimeout(() => setIsWakeWordActive(false), 2000);
+            }
+          }
+        });
+
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
+
+        processor.onaudioprocess = (event) => {
+          if (audioContext.state === 'suspended') {
+            audioContext.resume();
+          }
+          if (recognizer) {
+            try {
+              recognizer.acceptWaveform(event.inputBuffer);
+            } catch (e) { console.error(e); }
+          }
+        };
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+      } catch (err) {
+        console.error("Failed to start Vosk:", err);
+      }
+    };
+
+    startVosk();
+
+    // Cleanup Function for Effect
+    return () => {
+      if (voskRecognizerRef.current) {
+        // We do NOT want to stop model between renders if possible, but React strict mode double invokes.
+        // Ideally we keep it running? 
+        // But if dependencies change (Device ID?), we must restart.
+        try {
+          audioContextRef.current?.close();
+          processorRef.current?.disconnect();
+          sourceRef.current?.disconnect();
+        } catch (e) { }
+        voskRecognizerRef.current = null;
+        // Model can stay in ref
+      }
+    };
+  }, [voiceInputEnabled, inputDeviceId, wakeWord, transcriptionProvider]); // Removed transcriptionProvider dependency restriction logic, but kept in dep array for safety if needed
+
+
+  const speakText = async (text: string) => {
+    // DEBUG: Trace caller
+    // console.trace("speakText called");
+    console.log(`speakText called. Enabled: ${ttsEnabledRef.current}, Provider: ${ttsProviderRef.current}, Text: ${text.substring(0, 50)}...`);
+
+    if (!ttsEnabledRef.current) {
+      console.log("TTS Disabled. Aborting speakText.");
+      return;
+    }
+    stopSpeaking();
+
+    // 1. Check length
+    let textToSpeak = text;
+    if (text.length > ttsSummaryThresholdRef.current && ttsSummaryPromptRef.current) {
+      try {
+        console.log("Respones too long for TTS, summarizing...");
+        const summary = await aiService.chat(
+          [{ role: 'user', content: `${ttsSummaryPromptRef.current}\n\n${text}` }],
+          undefined // AbortSignal
+          // We might need to ensure the model supports this.
+          // For simplicity, using same AI service method.
+        );
+        console.log("Summary for TTS:", summary);
+        if (summary) {
+          textToSpeak = summary;
+          if (window.electronAPI) window.electronAPI.log(`TTS: Summary generated: ${textToSpeak}`);
+        }
+      } catch (e) {
+        console.error("Failed to summarize for TTS:", e);
+        // Fallback to original text or truncated?
+        // Let's fallback to original but maybe truncated?
+        // For now, original.
+      }
+    }
+
+    setIsSpeaking(true); // START SPEAKING
+
+    if (ttsProviderRef.current === 'browser') {
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      // Try to find selected voice
+      //   if (ttsVoice) {
+      //       const voices = window.speechSynthesis.getVoices();
+      //       const selected = voices.find(v => v.name === ttsVoice || v.voiceURI === ttsVoice);
+      //       if (selected) utterance.voice = selected;
+      //   }
+
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    // VOICEVOX Integration
+    else if (ttsProvider === 'voicevox') {
+      try {
+        const speakerId = ttsVoice || '1'; // Default Zundamon
+        if (window.electronAPI) window.electronAPI.log(`Calling VoiceVox with Speaker ${speakerId}`);
+
+        // 1. Audio Query
+        const queryRes = await fetch(`http://localhost:50021/audio_query?speaker=${speakerId}&text=${encodeURIComponent(textToSpeak)}`, {
+          method: 'POST'
+        });
+        if (!queryRes.ok) throw new Error("VoiceVox Query Failed");
+        const queryJson = await queryRes.json();
+
+        // 2. Synthesis
+        const synthesisRes = await fetch(`http://localhost:50021/synthesis?speaker=${speakerId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(queryJson)
+        });
+        if (!synthesisRes.ok) throw new Error("VoiceVox Synthesis Failed");
+
+        const arrayBuffer = await synthesisRes.arrayBuffer();
+        const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+
+        const audio = new Audio(url);
+        audio.onended = () => {
+          setIsSpeaking(false);
+          URL.revokeObjectURL(url);
+        };
+        audio.onerror = (e) => {
+          console.error("Audio playback error", e);
+          setIsSpeaking(false);
+        };
+        audio.play();
+
+      } catch (e: any) {
+        console.error("VoiceVox Error:", e);
+        if (window.electronAPI) window.electronAPI.log(`VoiceVox Error: ${e.message}`);
+        setIsSpeaking(false);
+      }
+    }
+
+    // ... (Other providers placeholder)
+    else {
+      // For non-browser, we assume we might implement audio playback later
+      // For now, simulate async speaking or just ignore
+      setIsSpeaking(false);
+    }
+  };
+
+  const stopSpeaking = () => {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  };
+
+  const handleMicClick = async () => {
+    console.log("Mic Clicked. Provider:", transcriptionProvider, "VoiceInput:", voiceInputEnabled);
+    if (window.electronAPI) window.electronAPI.log(`Mic Clicked. Provider: ${transcriptionProvider}`);
+
+    // Toggle recording based on provider
+    if (transcriptionProvider === 'native') {
+      // Manual Mic Click for Native: One-shot recording override
+      if (!('webkitSpeechRecognition' in window)) return;
+
+      setIsRecording(true);
+      // @ts-ignore
+      const recognition = new window.webkitSpeechRecognition();
+      recognition.continuous = false; // Stop after one sentence
+      recognition.interimResults = false;
+      recognition.lang = targetLanguage || 'en-US';
+
+      recognition.onstart = () => {
+        if (window.electronAPI) window.electronAPI.log("Manual Native Recording Started");
+      };
+
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          transcript += event.results[i][0].transcript;
+        }
+
+        const isFinal = event.results[event.results.length - 1].isFinal;
+
+        if (transcript.trim() && isFinal) {
+          // Log to Transcription Tab
+          setHistory(prev => [...prev, {
+            id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+            type: 'system',
+            content: transcript,
+            timestamp: new Date().toISOString(),
+            category: 'transcription',
+            isMasked: false
+          }]);
+
+          // Execute
+          handleExecute(transcript, true);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error("Manual recognition error", event.error);
+        setIsRecording(false);
+      };
+
+      recognition.onend = () => setIsRecording(false);
+      recognition.start();
+
+    } else if (transcriptionProvider === 'vosk') {
+      // Toggle Recording State
+      const newState = !isRecording;
+
+      // If stopping, check for partial result to commit (Prevent lost sentence)
+      if (isRecording && voskLastPartialRef.current && voskLastPartialRef.current.trim()) {
+        const finalPartial = voskLastPartialRef.current.trim();
+        if (window.electronAPI) window.electronAPI.log(`Vosk Manual Stop. Committing partial: ${finalPartial}`);
+
+        setHistory(prev => [...prev, {
+          id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+          type: 'system',
+          content: finalPartial,
+          timestamp: new Date().toISOString(),
+          category: 'transcription',
+          isMasked: false
+        }]);
+
+        // Execute immediately
+        handleExecute(finalPartial, true);
+        voskLastPartialRef.current = ""; // Clear to prevent double processing if possible
+      }
+
+      setIsRecording(newState);
+      if (window.electronAPI) window.electronAPI.log(`Vosk Manual Recording toggled to: ${newState}`);
+
+    } else {
+      // OpenAI / Local (MediaRecorder)
+      if (isRecording) {
+        // Stop
+        mediaRecorderRef.current?.stop();
+        setIsRecording(false);
+      } else {
+        // Start
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: inputDeviceId && inputDeviceId !== 'default' ? { exact: inputDeviceId } : undefined
+            }
+          });
+          const mediaRecorder = new MediaRecorder(stream);
+          mediaRecorderRef.current = mediaRecorder;
+          audioChunksRef.current = [];
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) audioChunksRef.current.push(event.data);
+          };
+
+          mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+            // Transcribe
+            try {
+              setIsProcessing(true);
+              let text = "";
+
+              if (transcriptionProvider === 'groq') {
+                if (!groqApiKey) throw new Error("Groq API Key is missing.");
+                text = await aiService.transcribeWithGroq(groqApiKey, audioBlob);
+              } else {
+                text = await aiService.transcribeAudio(audioBlob);
+              }
+
+              if (text) {
+                if (window.electronAPI) window.electronAPI.log(`Transcription: ${text}`);
+                setHistory(prev => [...prev, {
+                  id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                  type: 'system',
+                  content: text,
+                  timestamp: new Date().toISOString(),
+                  category: 'transcription',
+                  isMasked: false
+                }]);
+                handleExecute(text, true);
+              }
+            } catch (err: any) {
+              console.error("Transcription failed", err);
+              setHistory(prev => [...prev, {
+                id: Date.now().toString(),
+                type: 'system',
+                content: `Transcription Error: ${err.message}`,
+                timestamp: new Date().toISOString(),
+                category: 'chat'
+              }]);
+            } finally {
+              setIsProcessing(false);
+              // Stop tracks
+              stream.getTracks().forEach(track => track.stop());
+            }
+          };
+
+          mediaRecorder.start();
+          setIsRecording(true);
+
+          // Hybrid Logic: Stop automatically after timeout IF triggered by Wake Word (implied context)
+          // But here, handleMicClick is manual.
+          // We need a separate function for the "Hybrid Command Listener".
+        } catch (err) {
+          console.error("Failed to start recording:", err);
+        }
+      }
+    }
+  };
+
+  // HYBRID LISTENER: Records audio for (wakeWordTimeout) seconds then sends to Gemini
+  const startListeningForCommand = async () => {
+    try {
+      if (window.electronAPI) window.electronAPI.log(`Starting Hybrid Command Listening (Timeout: ${wakeWordTimeout}s)`);
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: inputDeviceId && inputDeviceId !== 'default' ? { exact: inputDeviceId } : undefined,
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+          sampleRate: 16000
+        }
+      });
+
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        setIsRecording(false);
+        setIsWakeWordActive(false); // Turn off green flash
+
+        const audioBlob = new Blob(chunks, { type: 'audio/wav' });
+
+        // Send to AI
+        try {
+          if (window.electronAPI) window.electronAPI.log("Sending Audio to AI...");
+          setIsProcessing(true);
+
+          let transcript = "";
+          if (transcriptionProvider === 'groq') {
+            if (!groqApiKey) throw new Error("Groq API Key is missing.");
+            transcript = await aiService.transcribeWithGroq(groqApiKey, audioBlob);
+          } else {
+            transcript = await aiService.transcribeAudio(audioBlob);
+          }
+
+          if (window.electronAPI) window.electronAPI.log(`AI Transcription: ${transcript}`);
+
+          if (transcript && transcript.trim()) {
+            // Execute the command
+            handleExecute(transcript, true);
+          }
+        } catch (e: any) {
+          console.error("Gemini Transcription Failed:", e);
+          if (window.electronAPI) window.electronAPI.log(`Gemini Transcription Failed: ${e.message}`);
+          setHistory(prev => [...prev, {
+            id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+            type: 'system',
+            content: `Transcription Error: ${e.message}`,
+            timestamp: new Date().toISOString(),
+            category: 'transcription',
+            isMasked: false
+          }]);
+        } finally {
+          setIsProcessing(false);
+          stream.getTracks().forEach(track => track.stop());
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true); // Shows Red Pulse
+
+      // Smart VAD (Silence Detection)
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.5; // Smooth out sudden peaks
+      const microphone = audioContext.createMediaStreamSource(stream);
+      microphone.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let lastVoiceTimestamp = Date.now();
+
+      let vadInterval: NodeJS.Timeout | null = null;
+
+
+      // Actually Uint8 val 0-255. 20 is quiet noise floor.
+      // Let's use a dynamic approach or safe default. 
+      // If we simply use "activity resets timer", we need to know what "activity" is.
+      const VOICE_THRESHOLD = 30;    // Usage: if volume > 30, it's voice.
+
+      const checkAudioLevel = () => {
+        analyser.getByteFrequencyData(dataArray);
+
+        // Calculate average volume
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const average = sum / dataArray.length;
+
+        // If loud enough, reset silence
+        if (average > VOICE_THRESHOLD) {
+          lastVoiceTimestamp = Date.now();
+          if (window.electronAPI && developerMode) {
+            // Optional: Visual debug
+            // console.log("Voice detected:", average);
+          }
+        }
+
+        // Check time since last voice
+        const timeSinceVoice = (Date.now() - lastVoiceTimestamp) / 1000;
+
+        if (timeSinceVoice > wakeWordTimeout) {
+          // Silence detected for longer than timeout
+          if (mediaRecorder.state === 'recording') {
+            console.log(`Silence detected (${timeSinceVoice.toFixed(1)}s). Stopping recording.`);
+            mediaRecorder.stop();
+
+            // Cleanup VAD
+            if (vadInterval) clearInterval(vadInterval);
+            microphone.disconnect();
+            analyser.disconnect();
+            audioContext.close();
+          }
+        }
+      };
+
+      // Check every 100ms
+      vadInterval = setInterval(checkAudioLevel, 100);
+
+      // Force stop max duration (e.g. 30 seconds) just in case
+      setTimeout(() => {
+        if (mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+          if (vadInterval) clearInterval(vadInterval);
+          microphone.disconnect();
+          analyser.disconnect();
+          audioContext.close();
+        }
+      }, 30000);
+
+    } catch (e) {
+      console.error("Failed to start hybrid listener", e);
+    }
+  };
+
+  // Voice Recognition Effect (Wake Word Only)
+  const handleExecute = async (overrideText?: string, isVoiceCommand: boolean = false) => {
+    stopSpeaking(); // Stop any current speech
+
+    // Determine text to process
+    const textToProcess = overrideText !== undefined ? overrideText : inputText;
+
+    // Validation
+    if (!textToProcess.trim()) return;
+
+    // Retry sending key if service might be missing it (redundant with useEffect but safe)
+    aiService.updateSettings({ apiKey, geminiApiKey, geminiModelName, openaiApiKey, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName });
+
+    setIsProcessing(true);
+    // If not override, clear input. If override (voice), we don't clear manual input (or maybe we show it?)
+    if (overrideText === undefined) {
+      setInputText('');
+    }
+
+    if (window.electronAPI) window.electronAPI.log(`Starting execution for: ${textToProcess} (Voice: ${isVoiceCommand})`);
+
+    const controller = new AbortController();
+    setAbortController(controller);
+
+    const newItem: HistoryItem = {
+      id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+      type: 'text',
+      content: textToProcess,
+      timestamp: new Date().toISOString(),
+      category: 'chat'
+    };
+
+    setHistory(prev => [...prev, newItem]);
+    if (window.electronAPI) window.electronAPI.addHistory(newItem);
+
+    // Scroll to bottom
+    setTimeout(() => {
+      historyEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+
+    const mathResult = evaluateMath(newItem.content);
+    if (mathResult) {
+      const responseItem: HistoryItem = {
+        id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+        type: 'response',
+        content: `= ${mathResult}`,
+        timestamp: new Date().toISOString(),
+        category: 'chat'
+      };
+      setHistory(prev => [...prev, responseItem]);
+      if (window.electronAPI) window.electronAPI.addHistory(responseItem);
+      setIsProcessing(false);
+      return;
+    }
+
+    try {
+      let response = '';
+
+      if (isConversationMode) {
+        // Get recent history for context
+        // We limit context to last N messages? Or all?
+        // Let's take last 10 for performance
+        const validHistory = history.filter(h => h.type !== 'system' && h.type !== 'clipboard');
+        const recentHistory = validHistory.slice(-10).map(h => ({
+          role: (h.type === 'text' ? 'user' : 'model'),
+          content: h.content
+        }));
+
+        const messages: any[] = [];
+        if (systemPrompt && systemPrompt.trim()) {
+          messages.push({ role: 'system', content: systemPrompt });
+        }
+        if (!overrideText) {
+          // If from input box, include history. 
+          // If from voice, ALSO include history? Yes.
+          messages.push(...recentHistory);
+        } else {
+          messages.push(...recentHistory); // Voice commands also need context
+        }
+
+        // Append additional prompt to current message if defined
+        const effectiveContent = textToProcess + (additionalPrompt && additionalPrompt.trim() ? `\n\n${additionalPrompt}` : '');
+        messages.push({ role: 'user', content: effectiveContent });
+
+        response = await aiService.chat(messages, controller.signal);
+      } else {
+        // Single Turn Mode
+        const messages: any[] = [];
+        if (systemPrompt && systemPrompt.trim()) {
+          messages.push({ role: 'system', content: systemPrompt });
+        }
+
+        const effectiveContent = textToProcess + (additionalPrompt && additionalPrompt.trim() ? `\n\n${additionalPrompt}` : '');
+        messages.push({ role: 'user', content: effectiveContent });
+
+        response = await aiService.chat(messages, controller.signal);
+      }
+
+      // ... response handling ...
+
+      const responseItem: HistoryItem = {
+        id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+        type: 'response',
+        content: response,
+        timestamp: new Date().toISOString(),
+        category: 'chat'
+      };
+      setHistory(prev => [...prev, responseItem]);
+      if (window.electronAPI) window.electronAPI.addHistory(responseItem);
+
+      // Trigger TTS
+      speakText(response);
+
+    } catch (error: any) {
+      const errorItem: HistoryItem = {
+        id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+        type: 'system',
+        content: error.message === "Request aborted" || error.message === "Request cancelled by user"
+          ? 'Process cancelled by user.'
+          : `Error: ${error.message}`,
+        timestamp: new Date().toISOString(),
+        category: 'chat'
+      };
+      setHistory(prev => [...prev, errorItem]);
+    } finally {
+      setIsProcessing(false);
+      setAbortController(null);
+    }
+  };
+
+
+
+  const handleStop = () => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  const handleDelete = (id: string) => {
+    setHistory(prev => prev.map(item => item.id === id ? { ...item, isMasked: !item.isMasked } : item));
+  };
+
+  const handleRetry = (text: string) => {
+    setInputText(text);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 10);
+  };
+
+  const handleSummarize = async (text: string) => {
+    setIsProcessing(true);
+    const controller = new AbortController();
+    setAbortController(controller);
+
+    try {
+      const prompt = `
+You are a summarizer.
+Target Language: ${targetLanguage}
+Input Text:
+"${text}"
+
+Instruction: Summarize the input text concisely in ${targetLanguage}.
+`;
+      const summary = await aiService.generateText(prompt, controller.signal);
+
+      const responseItem: HistoryItem = {
+        id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+        type: 'response',
+        content: `Summary:\n${summary}`,
+        timestamp: new Date().toISOString(),
+        category: 'chat'
+      };
+      setHistory(prev => [...prev, responseItem]);
+      if (window.electronAPI) window.electronAPI.addHistory(responseItem);
+
+    } catch (error: any) {
+      console.error("Summarization failed:", error);
+    } finally {
+      setIsProcessing(false);
+      setAbortController(null);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    setHistory([]);
+  };
+
+  const handleToggleClipboard = async () => {
+    const newState = !isClipboardEnabled;
+    setIsClipboardEnabled(newState);
+    if (window.electronAPI) {
+      await window.electronAPI.toggleClipboard(newState);
+    }
+  };
+
+  const handleSettingsUpdate = (newSettings: any) => {
+    if (newSettings.apiKey !== undefined) setApiKey(newSettings.apiKey);
+    if (newSettings.geminiApiKey !== undefined) setGeminiApiKey(newSettings.geminiApiKey);
+    if (newSettings.geminiModelName !== undefined) setGeminiModelName(newSettings.geminiModelName);
+    if (newSettings.groqApiKey !== undefined) setGroqApiKey(newSettings.groqApiKey);
+    if (newSettings.openaiApiKey !== undefined) setOpenaiApiKey(newSettings.openaiApiKey);
+    if (newSettings.isClipboardEnabled !== undefined) setIsClipboardEnabled(newSettings.isClipboardEnabled);
+    if (newSettings.themeColor !== undefined) setThemeColor(newSettings.themeColor);
+    if (newSettings.provider !== undefined) setProvider(newSettings.provider);
+    if (newSettings.localBaseUrl !== undefined) setLocalBaseUrl(newSettings.localBaseUrl);
+    if (newSettings.localModelName !== undefined) setLocalModelName(newSettings.localModelName);
+    if (newSettings.openaiBaseUrl !== undefined) setOpenaiBaseUrl(newSettings.openaiBaseUrl);
+    if (newSettings.openaiModelName !== undefined) setOpenaiModelName(newSettings.openaiModelName);
+    if (newSettings.targetLanguage !== undefined) setTargetLanguage(newSettings.targetLanguage);
+    if (newSettings.skinId !== undefined) setSkinId(newSettings.skinId);
+    if (newSettings.systemPrompt !== undefined) setSystemPrompt(newSettings.systemPrompt);
+    if (newSettings.additionalPrompt !== undefined) setAdditionalPrompt(newSettings.additionalPrompt);
+    if (newSettings.ttsEnabled !== undefined) setTtsEnabled(newSettings.ttsEnabled);
+    if (newSettings.ttsProvider !== undefined) setTtsProvider(newSettings.ttsProvider);
+    if (newSettings.ttsVoice !== undefined) setTtsVoice(newSettings.ttsVoice);
+    if (newSettings.ttsSummaryPrompt !== undefined) setTtsSummaryPrompt(newSettings.ttsSummaryPrompt);
+    if (newSettings.ttsSummaryThreshold !== undefined) setTtsSummaryThreshold(newSettings.ttsSummaryThreshold);
+    if (newSettings.inputDeviceId !== undefined) setInputDeviceId(newSettings.inputDeviceId);
+    if (newSettings.wakeWord !== undefined) setWakeWord(newSettings.wakeWord);
+    if (newSettings.voiceInputEnabled !== undefined) setVoiceInputEnabled(newSettings.voiceInputEnabled);
+    if (newSettings.transcriptionProvider !== undefined) setTranscriptionProvider(newSettings.transcriptionProvider);
+    if (newSettings.wakeWordTimeout !== undefined) setWakeWordTimeout(newSettings.wakeWordTimeout);
+    if (newSettings.developerMode !== undefined) setDeveloperMode(newSettings.developerMode);
+    if (newSettings.logDirectory !== undefined) setLogDirectory(newSettings.logDirectory);
+  };
+
+  const settingsObj = {
+    apiKey, geminiApiKey, geminiModelName, groqApiKey, openaiApiKey, isClipboardEnabled, themeColor, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName, targetLanguage, skinId, logDirectory, systemPrompt, additionalPrompt,
+    ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
+    inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider, wakeWordTimeout, developerMode
+  };
+
+  return (
+    <div className={`h-screen w-screen text-white overflow-hidden flex flex-col font-sans`} style={{ background: `linear-gradient(to bottom right, ${themeColor || '#ef4444'}, #000000)` }}>
+      <Header
+        onMinimize={() => window.electronAPI?.minimizeWindow()}
+        onClose={() => window.electronAPI?.closeWindow()}
+      />
+
+      {/* Toolbar */}
+      <div className="flex items-center justify-end px-4 py-1 bg-black/10 backdrop-blur-sm border-b border-white/5 gap-2">
+        <button
+          onClick={handleClearHistory}
+          className="p-1 hover:bg-white/10 rounded text-[10px] text-white/50 hover:text-white transition-colors uppercase tracking-wider"
+          title="Clear History"
+        >
+          CLEAR LOG
+        </button>
+        <div className="w-px h-3 bg-white/10"></div>
+        <button
+          onClick={() => setShowSettings(true)}
+          className="p-1 hover:bg-white/10 rounded text-white/50 hover:text-white transition-colors"
+          title="Settings"
+        >
+          <Settings size={12} />
+        </button>
+      </div>
+
+      <div className="flex-1 flex flex-col overflow-hidden relative">
+        <HistoryList
+          history={history}
+          activeTab={activeTab}
+          onCopy={handleCopy}
+          onDelete={handleDelete}
+          onRetry={handleRetry}
+          onSummarize={handleSummarize}
+        />
+
+        <InputArea
+          inputText={inputText}
+          setInputText={setInputText}
+          isProcessing={isProcessing}
+          onExecute={() => handleExecute()}
+          inputRef={inputRef}
+          onStop={handleStop}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          isClipboardEnabled={isClipboardEnabled}
+          onToggleClipboard={handleToggleClipboard}
+          isConversationMode={isConversationMode}
+          setIsConversationMode={setIsConversationMode}
+          onStopTTS={stopSpeaking}
+          isSpeaking={isSpeaking}
+          onMicClick={handleMicClick}
+          isWakeWordActive={isWakeWordActive}
+          isRecording={isRecording}
+        />
+      </div>
+
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          settings={settingsObj}
+          onUpdate={handleSettingsUpdate}
+          appVersion={appVersion}
+        />
+      )}
+    </div>
+  )
+}
+
+export default App

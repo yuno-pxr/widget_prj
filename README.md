@@ -105,3 +105,16 @@ npm run dev:electron
 npm run pack
 ```
 出力は `dist_packager/` ディレクトリに生成されます。
+
+
+### リリース
+
+#### 配布物について
+
+AIでコーディングしているため、弊社及び開発者はいかなる保証も行いません。
+
+
+#### 配布バイナリ
+
+[0.1.9.2]https://drive.google.com/file/d/1RFil2xPHXfvki0INvaB-NoSujrcnSuiV/view?usp=sharing
+

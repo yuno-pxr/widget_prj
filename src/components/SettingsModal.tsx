@@ -356,6 +356,8 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                                 </div>
                             )}
 
+
+
                             {/* Usage Stats (Placeholder for now, could be passed in props if available) */}
                             {/* <div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-200">
                                 <span className="font-bold">ESTIMATED USAGE:</span> 12,500 Tokens (Session)
@@ -367,6 +369,22 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                     {activeTab === 'skin' && (
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-3">
+                                {/* Default Skin Option */}
+                                <div
+                                    onClick={() => handleSkinSelect('default')}
+                                    className={`
+                                    cursor-pointer rounded-lg border p-2 flex flex-col gap-2 transition-all
+                                    ${localSettings.skinId === 'default' ? 'bg-white/10 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 'bg-white/5 border-white/10 hover:bg-white/10'}
+                                `}
+                                >
+                                    <div className="h-16 rounded bg-black/50 flex items-center justify-center text-white/20 overflow-hidden relative">
+                                        <Layers size={24} />
+                                    </div>
+                                    <div>
+                                        <div className="text-xs font-bold text-white truncate">Default (Dark)</div>
+                                        <div className="text-[10px] text-white/50 truncate">Monolith Standard</div>
+                                    </div>
+                                </div>
                                 {availableSkins.map((s) => (
                                     <div
                                         key={s.id}
@@ -587,7 +605,7 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
 
                                     {localSettings.transcriptionProvider === 'groq' && (
                                         <div className="mt-2 space-y-1 bg-white/5 p-2 rounded">
-                                            <Label>Groq API Key (Whisper)</Label>
+                                            <Label>Groq API Key (Saved)</Label>
                                             <Input
                                                 type="password"
                                                 value={localSettings.groqApiKey || ''}
@@ -768,7 +786,7 @@ function ProviderButton({ id, label, color, current, onClick }: { id: string, la
         <button
             onClick={() => onClick(id)}
             className={`flex-1 py-1.5 rounded text-[10px] font-bold transition-colors ${isSelected ? 'text-white' : ''} ${bg}`}
-            style={isSelected ? { backgroundColor: color === 'blue' ? '#3b82f6' : color === 'purple' ? '#a855f7' : '#22c55e' } : {}}
+            style={isSelected ? { backgroundColor: color === 'blue' ? '#3b82f6' : color === 'purple' ? '#a855f7' : color === 'green' ? '#22c55e' : '#f97316' } : {}}
         >
             {label}
         </button>

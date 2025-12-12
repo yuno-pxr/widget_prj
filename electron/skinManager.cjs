@@ -8,6 +8,7 @@ class SkinManager {
         this.skinsPath = path.join(this.userDataPath, 'skins');
         this.ensureSkinsDirectory();
         this.ensureDemoSkin();
+        this.ensureFlatTheme();
     }
 
     ensureSkinsDirectory() {
@@ -55,6 +56,86 @@ button {
                 console.log('Created demo skin at:', demoSkinPath);
             } catch (e) {
                 console.error('Failed to create demo skin:', e);
+            }
+        }
+    }
+
+    ensureFlatTheme() {
+        const flatThemePath = path.join(this.skinsPath, 'flat_theme');
+        // Always try to copy in Dev mode to ensure updates, or just check existence
+        // For simplicity, check existence.
+        if (!fs.existsSync(flatThemePath)) {
+            try {
+                fs.mkdirSync(flatThemePath, { recursive: true });
+
+                // Copy from source if available (Dev mode)
+                // Assuming we are in electron/skinManager.cjs and source is at ../skins/flat_theme
+                const sourcePath = path.join(__dirname, '..', 'skins', 'flat_theme');
+
+                if (fs.existsSync(sourcePath)) {
+                    console.log('Copying flat_theme from source:', sourcePath);
+                    const files = fs.readdirSync(sourcePath);
+                    for (const file of files) {
+                        fs.copyFileSync(path.join(sourcePath, file), path.join(flatThemePath, file));
+                    }
+                } else {
+                    // Fallback: Create manually if source not found (e.g. packaged app without extra resources)
+                    const skinJson = {
+                        "metadata": {
+                            "name": "Flat Theme",
+                            "version": "1.0.0",
+                            "author": "Monolith",
+                            "description": "A flat, non-gradient dark theme."
+                        },
+                        "styles": {
+                            "cssFile": "flat.css",
+                            "colors": {
+                                "primary": "#3b82f6",
+                                "background": "#121212",
+                                "text": "#ffffff"
+                            }
+                        },
+                        "assets": {
+                            "animations": {
+                                "waiting": {
+                                    "url": "https://cdn.rive.app/animations/vehicles.riv",
+                                    "stateMachine": "bumpy"
+                                }
+                            }
+                        }
+                    };
+                    fs.writeFileSync(path.join(flatThemePath, 'skin.json'), JSON.stringify(skinJson, null, 2));
+
+                    const cssContent = `/* Flat Theme CSS */
+:root {
+    --bg-primary: #121212;
+    --bg-secondary: #1e1e1e;
+    --text-primary: #ffffff;
+    --text-secondary: #aaaaaa;
+    --accent: #3b82f6;
+}
+
+body {
+    background: var(--bg-primary) !important; 
+    /* Force override any gradient on body if present usually defined in index.css */
+}
+
+/* Override common components to remove gradients/blur if desired */
+.backdrop-blur-md {
+    backdrop-filter: none !important;
+    background-color: var(--bg-secondary) !important;
+}
+
+.bg-gradient-to-b {
+    background-image: none !important;
+    background-color: var(--bg-primary) !important;
+}
+`;
+                    fs.writeFileSync(path.join(flatThemePath, 'flat.css'), cssContent);
+                }
+                console.log('Ensured flat_theme at:', flatThemePath);
+            } catch (e) {
+                console.error('Failed to ensure flat_theme:', e);
             }
         }
     }

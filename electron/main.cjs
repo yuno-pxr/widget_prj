@@ -314,6 +314,11 @@ app.whenReady().then(() => {
             createWindow();
         }
     });
+
+    if (process.platform === 'darwin') {
+        const iconPath = path.join(__dirname, 'icon.png');
+        app.dock.setIcon(iconPath);
+    }
 });
 
 app.on('will-quit', () => {

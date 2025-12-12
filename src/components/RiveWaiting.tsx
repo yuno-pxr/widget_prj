@@ -1,4 +1,5 @@
 import { useRive, Layout, Fit, Alignment } from '@rive-app/react-canvas';
+import { useSkin } from '../contexts/SkinContext';
 
 interface RiveWaitingProps {
     className?: string;
@@ -10,9 +11,16 @@ export const RiveWaiting = ({ className = "" }: RiveWaitingProps) => {
     // 'vehicles.riv' is a common example, though not a spinner.
     // We will limit its size or use it as a placeholder.
     // TODO: Replace with a proper "Loading" animation URL or local file.
+    const { getAnimation } = useSkin();
+    const skinAnimation = getAnimation('waiting');
+
+    // Default Fallback
+    const defaultSrc = 'https://cdn.rive.app/animations/vehicles.riv';
+    const defaultStateMachine = 'bumpy';
+
     const { RiveComponent } = useRive({
-        src: 'https://cdn.rive.app/animations/vehicles.riv',
-        stateMachines: "bumpy", // 'bumpy' is a state machine in vehicles.riv
+        src: skinAnimation?.url || defaultSrc,
+        stateMachines: skinAnimation?.stateMachine || defaultStateMachine,
         autoplay: true,
         layout: new Layout({
             fit: Fit.Cover,

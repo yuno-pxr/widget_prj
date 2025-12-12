@@ -206,6 +206,7 @@ function App() {
         geminiApiKey,
         geminiModelName,
         openaiApiKey,
+        groqApiKey,
         isClipboardEnabled,
         themeColor,
         targetLanguage,
@@ -231,7 +232,7 @@ function App() {
       window.electronAPI.saveSettings(settingsToSave);
       aiService.updateSettings(settingsToSave);
     }
-  }, [apiKey, geminiApiKey, geminiModelName, openaiApiKey, isClipboardEnabled, themeColor, targetLanguage, skinId, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName, systemPrompt, additionalPrompt, ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider, wakeWordTimeout, developerMode]); // Added new dependencies
+  }, [apiKey, geminiApiKey, geminiModelName, openaiApiKey, groqApiKey, isClipboardEnabled, themeColor, targetLanguage, skinId, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName, systemPrompt, additionalPrompt, ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider, wakeWordTimeout, developerMode]); // Added new dependencies
 
   useEffect(() => {
     historyEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -451,6 +452,10 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
       return;
     }
 
+    // Debug Refs
+    const debugAudioChunks = useRef<Float32Array[]>([]);
+    const lastRmsLog = useRef<number>(0);
+
     // Attempt to start Vosk
     const startVosk = async () => {
       try {
@@ -493,11 +498,42 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
         const recognizer = new model.KaldiRecognizer(audioContext.sampleRate);
         voskRecognizerRef.current = recognizer;
 
+        // Helper: Normalized Trigger Check
+        const checkTrigger = (text: string, source: 'partial' | 'final') => {
+          // Normalize: Full-width to half-width, lowercase, remove punctuation if needed
+          // Simple normalization for now:
+          const normalizedText = text.toLowerCase()
+            .replace(/　/g, ' ')
+            .replace(/[、。！？]/g, '');
+          const normalizedWakeWord = wakeWord.toLowerCase()
+            .replace(/　/g, ' ')
+            .replace(/[、。！？]/g, '');
+
+          if (normalizedText.includes(normalizedWakeWord)) {
+            if (window.electronAPI) window.electronAPI.log(`[Vosk] Trigger Detected (${source}): "${text}"`);
+
+            // If not already active, trigger
+            if (!isWakeWordActive) {
+              setIsWakeWordActive(true);
+
+              // Trigger Hybrid Listener
+              startListeningForCommand();
+
+              // Reset recognizer to clear buffer? 
+              // recognizer.reset(); // Vosk JS API might not have reset, but creates new cycle on result.
+            }
+            return true;
+          }
+          return false;
+        };
+
         // 3. Logic: Result vs Partial
         recognizer.on("result", (message: any) => {
           const text = message.result.text;
           if (text) {
-            // Log EVERYTHING to Transcription Area
+            if (window.electronAPI) window.electronAPI.log(`[Vosk] Final Result: "${text}"`);
+
+            // Log to Transcription Tab
             setHistory(prev => [...prev, {
               id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
               type: 'system',
@@ -507,34 +543,13 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
               isMasked: false
             }]);
 
-            // Execution Logic
-            if (isRecordingRef.current) {
-              // If we are Manually Recording, check who is handling verification.
-              // If Transcription Provider is VOSK, we use this stream.
-              // If it is Groq/OpenAI, we ignore Vosk results (MediaRecorder handles it).
-              if (transcriptionProvider === 'vosk') {
-                handleExecute(text, true);
-              }
-            } else {
-              // Background Mode: Wake Word Only
-              if (text.toLowerCase().includes(wakeWord.toLowerCase())) {
-                const lowerTranscript = text.toLowerCase();
-                const lowerWakeWord = wakeWord.toLowerCase();
-                const wakeWordIndex = lowerTranscript.indexOf(lowerWakeWord);
-
-                if (wakeWordIndex !== -1) {
-                  // VOSK detected wake word.
-                  // Hybrid Approach:
-                  // 1. Acknowledge Wake Word
-                  if (window.electronAPI) window.electronAPI.log(`Wake Word Detected (Background): ${text}`);
-                  setIsWakeWordActive(true);
-
-                  // 2. Start Recording High-Quality Audio for Gemini
-                  // We do NOT use the text AFTER the wake word from Vosk, because Vosk is less accurate.
-                  // Instead, we start a dedicated recording session.
-                  startListeningForCommand();
-                }
-              }
+            // Execution Logic (Manual Recording)
+            if (isRecordingRef.current && transcriptionProvider === 'vosk') {
+              handleExecute(text, true);
+            }
+            // Background Mode (Wake Word)
+            else if (!isRecordingRef.current) {
+              checkTrigger(text, 'final');
             }
             voskLastPartialRef.current = "";
           }
@@ -544,17 +559,11 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
           const partial = message.result.partial;
           if (partial) {
             voskLastPartialRef.current = partial;
+            // Log partials occasionally or verbose mode?
+            // if (window.electronAPI) window.electronAPI.log(`[Vosk] Partial: "${partial}"`);
 
-            // Optional: Immediate Wake Word Feedback during partial?
-            // If we want "Green Flash" as soon as "Nico" is heard, even if sentence isn't done.
-            // Currently implemented in "Final" or "Stop". 
-            // Adding minimal check here for feedback ONLY
-            if (partial.toLowerCase().includes(wakeWord.toLowerCase()) && !isWakeWordActive) {
-              setIsWakeWordActive(true); // Just visual
-              // Don't execute yet, wait for final or silence? 
-              // Or execute if we want really fast response?
-              // Let's stick to Final for stability, but visual feedback is nice.
-              setTimeout(() => setIsWakeWordActive(false), 2000);
+            if (!isRecordingRef.current) {
+              checkTrigger(partial, 'partial');
             }
           }
         });
@@ -566,6 +575,34 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
           if (audioContext.state === 'suspended') {
             audioContext.resume();
           }
+
+          const inputData = event.inputBuffer.getChannelData(0);
+
+          // Debug: Accumulate Audio
+          if (debugAudioChunks.current.length < 500) { // Limit to ~20 seconds of chunks to save memory
+            // Copy buffer
+            debugAudioChunks.current.push(new Float32Array(inputData));
+          }
+
+          // Debug: RMS Calculation
+          let sumSquares = 0;
+          let peak = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            const abs = Math.abs(inputData[i]);
+            sumSquares += abs * abs;
+            if (abs > peak) peak = abs;
+          }
+          const rms = Math.sqrt(sumSquares / inputData.length);
+
+          // Log RMS every 1s (approx sampleRate/4096 = ~4 times/sec calls. 4096/16000 = 0.25s)
+          // Let's log every 4 calls
+          const now = Date.now();
+          if (now - lastRmsLog.current > 1000) {
+            console.log(`[AudioLoop] RMS: ${rms.toFixed(4)} Peak: ${peak.toFixed(4)} active: ${audioContext.state}`);
+            if (window.electronAPI && developerMode) window.electronAPI.log(`[AudioLoop] RMS: ${rms.toFixed(4)} Peak: ${peak.toFixed(4)}`);
+            lastRmsLog.current = now;
+          }
+
           if (recognizer) {
             try {
               recognizer.acceptWaveform(event.inputBuffer);
@@ -582,6 +619,66 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
     };
 
     startVosk();
+
+    // Debug Function to download WAV (Exposed to window for console use)
+    // @ts-ignore
+    window.downloadDebugAudio = () => {
+      if (debugAudioChunks.current.length === 0) {
+        console.warn("No debug audio captured");
+        return;
+      }
+      console.log("Compiling debug audio...");
+      const flattened = new Float32Array(debugAudioChunks.current.reduce((acc, chunk) => acc + chunk.length, 0));
+      let offset = 0;
+      for (const chunk of debugAudioChunks.current) {
+        flattened.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      // Convert to WAV
+      const buffer = flattened;
+      const wavBuffer = new ArrayBuffer(44 + buffer.length * 2);
+      const view = new DataView(wavBuffer);
+
+      // RIFF chunk descriptor
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + buffer.length * 2, true);
+      writeString(view, 8, 'WAVE');
+      // fmt sub-chunk
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // Mono
+      view.setUint32(24, 16000, true); // SampleRate
+      view.setUint32(28, 16000 * 2, true); // ByteRate
+      view.setUint16(32, 2, true); // BlockAlign
+      view.setUint16(34, 16, true); // BitsPerSample
+      // data sub-chunk
+      writeString(view, 36, 'data');
+      view.setUint32(40, buffer.length * 2, true);
+
+      // Write PCM samples
+      let p = 44;
+      for (let i = 0; i < buffer.length; i++) {
+        let s = Math.max(-1, Math.min(1, buffer[i]));
+        s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        view.setInt16(p, s, true);
+        p += 2;
+      }
+
+      const blob = new Blob([view], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'debug_vosk_input.wav';
+      a.click();
+    };
+
+    const writeString = (view: DataView, offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
 
     // Cleanup Function for Effect
     return () => {

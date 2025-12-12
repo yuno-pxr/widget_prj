@@ -69,6 +69,13 @@ export const SkinProvider = ({ children }: { children: ReactNode }) => {
         let skinData: SkinDefinition | null = null;
 
         if (typeof skinIdOrData === 'string') {
+            if (skinIdOrData === 'default') {
+                setSkin(null);
+                const existingStyle = document.getElementById('skin-css');
+                if (existingStyle) existingStyle.remove();
+                return;
+            }
+
             if (window.electronAPI?.loadSkin) {
                 try {
                     skinData = await window.electronAPI.loadSkin(skinIdOrData);

@@ -64,3 +64,16 @@
 - **�ڍׂ� docs/skin_creation.md ���Q��**
 
 - **Build Reporting**: Always explicitly state the output directory path when a build is completed.
+
+## 開発時の重要注意事項 (v0.1.10.2追記)
+
+### React Hooks のルール厳守
+- useRef, useState, useEffect などの Hooks は、条件分岐 (if) やループ、ネストされた関数内で呼び出してはいけません。
+- 必ずコンポーネントのトップレベルで呼び出してください。
+- 違反すると、プロダクションビルド（Minified）でのみ Minified React error #321 としてクラッシュする原因になります。
+
+### 配布ビルドの作成
+- 
+pm run pack (electron-packager) を実行する際は、必ず --ignore オプションで不要なファイルを除外してください。
+- 特に、過去にビルドされたバイナリフォルダ（例: MonolithWidget-v*）が src やルートに残っている場合、これらが再帰的に取り込まれて配布ファイルサイズが肥大化します。
+- 出力先ディレクトリ (--out) は、ファイルロック回避のため、ビルドごとに新しい名前（_rev2 など）を使うか、事前に確実に削除してください。

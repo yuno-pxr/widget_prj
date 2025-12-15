@@ -62,6 +62,8 @@ function App() {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const voskLastPartialRef = useRef<string>("");
+  const debugAudioChunks = useRef<Float32Array[]>([]);
+  const lastRmsLog = useRef<number>(0);
   const [isSpeaking, setIsSpeaking] = useState(false); // For Conditional Stop Button
 
   // Refs for stale closure prevention
@@ -452,9 +454,7 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
       return;
     }
 
-    // Debug Refs
-    const debugAudioChunks = useRef<Float32Array[]>([]);
-    const lastRmsLog = useRef<number>(0);
+
 
     // Attempt to start Vosk
     const startVosk = async () => {

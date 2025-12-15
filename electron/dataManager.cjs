@@ -22,6 +22,14 @@ class DataManager {
 
         this.historyPath = path.join(logDir, 'history.json');
 
+        if (!fs.existsSync(this.userDataPath)) {
+            try {
+                fs.mkdirSync(this.userDataPath, { recursive: true });
+            } catch (e) {
+                console.error('Error creating user data directory:', e);
+            }
+        }
+
         this.ensureFilesExist();
     }
 

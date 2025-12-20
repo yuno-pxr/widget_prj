@@ -4,9 +4,9 @@ import type { AIProvider, Message } from "./types";
 export class GeminiProvider implements AIProvider {
     private genAI: GoogleGenerativeAI | null = null;
     // private apiKey: string = ""; // Unused
-    private modelName: string = "gemini-2.0-flash"; // Default
+    private modelName: string = "gemini-3-flash-preview"; // Default
 
-    constructor(apiKey: string, modelName: string = "gemini-2.0-flash") {
+    constructor(apiKey: string, modelName: string = "gemini-3-flash-preview") {
         this.modelName = modelName;
         this.updateApiKey(apiKey);
     }
@@ -38,19 +38,28 @@ export class GeminiProvider implements AIProvider {
             throw new Error("API Key not set.");
         }
 
-        // Filter out system messages for history (Gemini handles system instruction separately, or we prepend)
-        // For simplicity, we'll prepend system messages to the first user message or just ignore if not critical.
-        // Actually, let's treat 'system' as 'user' but labeled.
+        // Separate system messages from chat history
+        const systemMessages = messages.filter(m => m.role === 'system');
+        const chatHistoryMessages = messages.filter(m => m.role !== 'system');
 
-        let history = messages.slice(0, -1).map(m => ({
+        let systemInstruction: string | undefined = undefined;
+        if (systemMessages.length > 0) {
+            systemInstruction = systemMessages.map(m => m.content).join('\n\n');
+        }
+
+        // Prepare history for startChat (excluding the very last message which is sent via sendMessage)
+        const history = chatHistoryMessages.slice(0, -1).map(m => ({
             role: m.role === 'model' ? 'model' : 'user',
-            parts: [{ text: m.role === 'system' ? `[System: ${m.content}]` : m.content }]
+            parts: [{ text: m.content }]
         }));
 
-        const lastMessage = messages[messages.length - 1];
-        if (!lastMessage) return ""; // Should not happen
+        const lastMessage = chatHistoryMessages[chatHistoryMessages.length - 1];
+        if (!lastMessage) return "";
 
-        const model = this.genAI.getGenerativeModel({ model: this.modelName });
+        const model = this.genAI.getGenerativeModel({
+            model: this.modelName,
+            systemInstruction: systemInstruction
+        });
 
         const chat = model.startChat({
             history: history,
@@ -72,6 +81,7 @@ export class GeminiProvider implements AIProvider {
         // Prioritize user selected model
         const modelsToTry = [
             this.modelName,
+            "gemini-3-flash-preview",
             "gemini-2.0-flash",
             "gemini-2.0-flash-lite",
             "gemini-flash-latest",

@@ -44,7 +44,7 @@ export class AIService {
             modelName = settings.openaiModelName;
             if (settings.openaiApiKey) apiKey = settings.openaiApiKey;
         } else if (settings.provider === 'gemini') {
-            modelName = settings.geminiModelName || "gemini-2.0-flash";
+            modelName = settings.geminiModelName || "gemini-3-flash-preview";
             if (settings.geminiApiKey) apiKey = settings.geminiApiKey;
             else if (settings.apiKey) apiKey = settings.apiKey; // Fallback to generic key if gemini specific not set
         } else if (settings.provider === 'groq') {

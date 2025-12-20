@@ -22,6 +22,7 @@ interface InputAreaProps {
     onMicClick?: () => void;
     isWakeWordActive?: boolean;
     isRecording?: boolean;
+    isSummarizing?: boolean;
 }
 
 export const InputArea = ({
@@ -29,6 +30,7 @@ export const InputArea = ({
     setInputText,
     onExecute,
     isProcessing,
+    isSummarizing = false,
     onStop,
     activeTab,
     setActiveTab,
@@ -99,19 +101,21 @@ export const InputArea = ({
                                     onExecute();
                                 }
                             }}
-                            disabled={isProcessing}
+                            disabled={isProcessing || isSummarizing}
                             placeholder={config.placeholder ?? "Type a command..."}
                             className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-white/20 focus:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             style={config.inputStyle}
                         />
 
-                        {/* Rive Waiting Overlay - Only show when processing */}
-                        {isProcessing && (
+                        {/* Rive Waiting Overlay - Only show when processing or summarizing */}
+                        {(isProcessing || isSummarizing) && (
                             <div className="absolute inset-0 bg-black/80 rounded-lg flex items-center justify-center z-10 overflow-hidden pointer-events-none">
                                 <div className="w-full h-full opacity-80">
                                     <RiveWaiting />
                                 </div>
-                                <span className="absolute text-xs font-bold tracking-widest text-white/50 animate-pulse">PROCESSING</span>
+                                <span className="absolute text-xs font-bold tracking-widest text-white/50 animate-pulse">
+                                    {isSummarizing ? 'SUMMARIZING...' : 'PROCESSING'}
+                                </span>
                             </div>
                         )}
                     </div>

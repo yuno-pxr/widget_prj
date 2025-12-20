@@ -99,6 +99,7 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
     ];
 
     const geminiModels = [
+        "gemini-3-flash-preview",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
         "gemini-flash-latest",
@@ -320,6 +321,10 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                                             placeholder="gpt-4o, grok-beta..."
                                         />
                                         <datalist id="openai-models">
+                                            <option value="gpt-5.2" />
+                                            <option value="gpt-5.2-instant" />
+                                            <option value="gpt-5.2-codex" />
+                                            <option value="gpt-5" />
                                             <option value="grok-beta" />
                                             <option value="gpt-4o" />
                                             <option value="gpt-4o-mini" />

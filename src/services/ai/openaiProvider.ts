@@ -3,7 +3,7 @@ import type { AIProvider, Message } from "./types";
 export class OpenAIProvider implements AIProvider {
     private baseUrl: string = "https://api.openai.com/v1";
     private apiKey: string = "";
-    private modelName: string = "gpt-3.5-turbo";
+    private modelName: string = "gpt-5.2";
 
     constructor(apiKey?: string, baseUrl?: string, modelName?: string) {
         if (apiKey) this.apiKey = apiKey;

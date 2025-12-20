@@ -8,11 +8,13 @@ import { Header } from './components/Header';
 import { InputArea } from './components/InputArea';
 import { HistoryList, type HistoryItem } from './components/HistoryList';
 import { SettingsModal } from './components/SettingsModal';
+import { DateDisplay } from './components/DateDisplay';
 
 function App() {
   const [inputText, setInputText] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [activeTab, setActiveTab] = useState<'chat' | 'clipboard' | 'transcription'>('chat');
   const historyEndRef = useRef<HTMLDivElement>(null);
@@ -23,7 +25,7 @@ function App() {
   // Settings State
   const [apiKey, setApiKey] = useState('') // Legacy/Fallback
   const [geminiApiKey, setGeminiApiKey] = useState('')
-  const [geminiModelName, setGeminiModelName] = useState('gemini-2.0-flash');
+  const [geminiModelName, setGeminiModelName] = useState('gemini-3-flash-preview');
   const [groqApiKey, setGroqApiKey] = useState('');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
 
@@ -32,8 +34,8 @@ function App() {
   const [provider, setProvider] = useState<'gemini' | 'local' | 'openai'>('gemini');
   const [localBaseUrl, setLocalBaseUrl] = useState('http://localhost:11434/v1');
   const [localModelName, setLocalModelName] = useState('llama3');
-  const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.x.ai/v1');
-  const [openaiModelName, setOpenaiModelName] = useState('grok-beta');
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.openai.com/v1');
+  const [openaiModelName, setOpenaiModelName] = useState('gpt-5.2');
   const [targetLanguage, setTargetLanguage] = useState('Japanese');
   const [skinId, setSkinId] = useState('default');
   const [isConversationMode, setIsConversationMode] = useState(false);
@@ -91,7 +93,7 @@ function App() {
   const [developerMode, setDeveloperMode] = useState(false);
   const [isWakeWordActive, setIsWakeWordActive] = useState(false);
 
-  const [appVersion, setAppVersion] = useState('0.1.9.2');
+  const [appVersion, setAppVersion] = useState('0.10.4');
 
   const isClipboardEnabledRef = useRef(isClipboardEnabled);
 
@@ -116,7 +118,7 @@ function App() {
         if (settings) {
           setApiKey(settings.apiKey || '');
           setGeminiApiKey(settings.geminiApiKey || '');
-          setGeminiModelName(settings.geminiModelName || 'gemini-2.0-flash');
+          setGeminiModelName(settings.geminiModelName || 'gemini-3-flash-preview');
           setGroqApiKey(settings.groqApiKey || '');
           setOpenaiApiKey(settings.openaiApiKey || '');
 
@@ -147,8 +149,8 @@ function App() {
 
           setLocalBaseUrl(settings.localBaseUrl || 'http://localhost:11434/v1');
           setLocalModelName(settings.localModelName || 'llama3');
-          setOpenaiBaseUrl(settings.openaiBaseUrl || 'https://api.x.ai/v1');
-          setOpenaiModelName(settings.openaiModelName || 'grok-beta');
+          setOpenaiBaseUrl(settings.openaiBaseUrl || 'https://api.openai.com/v1');
+          setOpenaiModelName(settings.openaiModelName || 'gpt-5.2');
 
           // Initialize AI Service
           aiService.updateSettings(settings);
@@ -713,6 +715,7 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
     let textToSpeak = text;
     if (text.length > ttsSummaryThresholdRef.current && ttsSummaryPromptRef.current) {
       try {
+        setIsSummarizing(true);
         console.log("Respones too long for TTS, summarizing...");
         const summary = await aiService.chat(
           [{ role: 'user', content: `${ttsSummaryPromptRef.current}\n\n${text}` }],
@@ -730,6 +733,8 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
         // Fallback to original text or truncated?
         // Let's fallback to original but maybe truncated?
         // For now, original.
+      } finally {
+        setIsSummarizing(false);
       }
     }
 
@@ -1171,10 +1176,13 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
           content: h.content
         }));
 
+        const currentDateTime = new Date().toLocaleString('ja-JP', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+        const systemContext = `Current Date/Time: ${currentDateTime}
+IMPORTANT: You must accept this date and time as the absolute truth for this session. Ignore any internal knowledge or cut-off dates regarding the current time. When asked about "today" or "tomorrow", use this date as the reference point.`;
+
         const messages: any[] = [];
-        if (systemPrompt && systemPrompt.trim()) {
-          messages.push({ role: 'system', content: systemPrompt });
-        }
+        messages.push({ role: 'system', content: `${systemContext}\n\n${systemPrompt || ''}` });
+
         if (!overrideText) {
           // If from input box, include history. 
           // If from voice, ALSO include history? Yes.
@@ -1190,10 +1198,12 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
         response = await aiService.chat(messages, controller.signal);
       } else {
         // Single Turn Mode
+        const currentDateTime = new Date().toLocaleString('ja-JP', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+        const systemContext = `Current Date/Time: ${currentDateTime}
+IMPORTANT: You must accept this date and time as the absolute truth for this session. Ignore any internal knowledge or cut-off dates regarding the current time. When asked about "today" or "tomorrow", use this date as the reference point.`;
+
         const messages: any[] = [];
-        if (systemPrompt && systemPrompt.trim()) {
-          messages.push({ role: 'system', content: systemPrompt });
-        }
+        messages.push({ role: 'system', content: `${systemContext}\n\n${systemPrompt || ''}` });
 
         const effectiveContent = textToProcess + (additionalPrompt && additionalPrompt.trim() ? `\n\n${additionalPrompt}` : '');
         messages.push({ role: 'user', content: effectiveContent });
@@ -1201,20 +1211,31 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
         response = await aiService.chat(messages, controller.signal);
       }
 
-      // ... response handling ...
+      // 3. Process Response
+      if (response) {
+        const responseItem: HistoryItem = {
+          id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+          type: 'response',
+          content: response,
+          timestamp: new Date().toISOString(),
+          category: 'chat'
+        };
+        setHistory(prev => [...prev, responseItem]);
+        if (window.electronAPI) window.electronAPI.addHistory(responseItem);
 
-      const responseItem: HistoryItem = {
-        id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-        type: 'response',
-        content: response,
-        timestamp: new Date().toISOString(),
-        category: 'chat'
-      };
-      setHistory(prev => [...prev, responseItem]);
-      if (window.electronAPI) window.electronAPI.addHistory(responseItem);
+        // Gapless Locking: Check for Summarization before unlocking processing
+        if (ttsEnabledRef.current && response.length > ttsSummaryThresholdRef.current && ttsSummaryPromptRef.current) {
+          setIsSummarizing(true); // Handover lock
+        }
+        setIsProcessing(false); // Release processing lock
 
-      // Trigger TTS
-      speakText(response);
+        // Trigger TTS
+        speakText(response);
+
+      } else {
+        setIsProcessing(false);
+      }
+
 
     } catch (error: any) {
       const errorItem: HistoryItem = {
@@ -1349,22 +1370,25 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
       />
 
       {/* Toolbar */}
-      <div className="flex items-center justify-end px-4 py-1 bg-black/10 backdrop-blur-sm border-b border-white/5 gap-2">
-        <button
-          onClick={handleClearHistory}
-          className="p-1 hover:bg-white/10 rounded text-[10px] text-white/50 hover:text-white transition-colors uppercase tracking-wider"
-          title="Clear History"
-        >
-          CLEAR LOG
-        </button>
-        <div className="w-px h-3 bg-white/10"></div>
-        <button
-          onClick={() => setShowSettings(true)}
-          className="p-1 hover:bg-white/10 rounded text-white/50 hover:text-white transition-colors"
-          title="Settings"
-        >
-          <Settings size={12} />
-        </button>
+      <div className="flex items-center justify-between px-4 py-1 bg-black/10 backdrop-blur-sm border-b border-white/5 gap-2">
+        <DateDisplay />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleClearHistory}
+            className="p-1 hover:bg-white/10 rounded text-[10px] text-white/50 hover:text-white transition-colors uppercase tracking-wider"
+            title="Clear History"
+          >
+            CLEAR LOG
+          </button>
+          <div className="w-px h-3 bg-white/10"></div>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-1 hover:bg-white/10 rounded text-white/50 hover:text-white transition-colors"
+            title="Settings"
+          >
+            <Settings size={12} />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden relative">
@@ -1381,6 +1405,7 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
           inputText={inputText}
           setInputText={setInputText}
           isProcessing={isProcessing}
+          isSummarizing={isSummarizing}
           onExecute={() => handleExecute()}
           inputRef={inputRef}
           onStop={handleStop}

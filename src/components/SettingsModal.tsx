@@ -90,6 +90,13 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
     }, [activeTab]);
     // Local state for form fields to avoid excessive re-renders in App
     const [localSettings, setLocalSettings] = useState(settings);
+    const [rawSleepTimeout, setRawSleepTimeout] = useState('');
+
+    // Sync sleep timeout when settings change (prop update) or on mount
+    useEffect(() => {
+        const val = settings.sleepTimeout !== undefined ? (settings.sleepTimeout / 60000).toString() : '0.5';
+        setRawSleepTimeout(val);
+    }, [settings.sleepTimeout]);
 
     const supportedLanguages = [
         'Japanese', 'English', 'Chinese', 'Korean', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Russian'
@@ -273,65 +280,96 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                                     </label>
                                 </div>
 
-                                {/* File Loader */}
-                                <div className="p-4 bg-white/5 rounded border border-white/5 space-y-3">
-                                    <div>
-                                        <Label>Avatar File (.emgl / .zip)</Label>
-                                        <div className="text-[10px] text-white/40 mb-2">Import an EMG Lite avatar package.</div>
+                                {/* Always On Top */}
+                                <div className="flex justify-between items-center py-2">
+                                    <Label>Always On Top</Label>
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${localSettings.alwaysOnTop !== false ? 'bg-blue-500/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
+                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${localSettings.alwaysOnTop !== false ? 'left-4.5' : 'left-0.5'}`} />
+                                        </div>
+                                        <input type="checkbox" checked={localSettings.alwaysOnTop !== false} onChange={(e) => handleChange('alwaysOnTop', e.target.checked)} className="hidden" />
+                                    </label>
+                                </div>
+
+                                {/* Sleep Timeout */}
+                                {/* Sleep Timeout */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <Label>Sleep Timeout (min)</Label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="0.1"
+                                                value={rawSleepTimeout}
+                                                onChange={(e) => {
+                                                    setRawSleepTimeout(e.target.value);
+                                                    const val = parseFloat(e.target.value);
+                                                    if (!isNaN(val)) {
+                                                        handleChange('sleepTimeout', val * 60000);
+                                                    }
+                                                }}
+                                                className="w-16 bg-black/20 border border-white/10 rounded p-1 text-right text-xs text-white"
+                                            />
+                                            <span className="text-xs text-white/50">min</span>
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-white/40">Set to 0 to disable sleep.</div>
+                                </div>
+
+                                <div className="block pt-4 border-t border-white/5 space-y-4">
+                                    {/* File Loader */}
+                                    <div className="space-y-2">
+                                        <Label>Avatar File</Label>
                                         <div className="flex gap-2">
                                             <Input
                                                 value={localSettings.avatarPath ? localSettings.avatarPath.split(/[/\\]/).pop() : ''}
                                                 readOnly
-                                                placeholder="No file loaded"
-                                                className="text-xs flex-1 bg-black/20"
+                                                placeholder="No .emgl / .zip loaded"
+                                                className="text-xs flex-1 bg-black/20 font-mono"
                                                 title={localSettings.avatarPath || "No file loaded"}
                                             />
                                             <button
                                                 onClick={async () => {
                                                     if (window.electronAPI && window.electronAPI.selectFile) {
                                                         const path = await window.electronAPI.selectFile({ filters: [{ name: 'Avatar Package', extensions: ['emgl', 'zip'] }] });
-                                                        if (path) {
-                                                            handleChange('avatarPath', path);
-                                                            // Also trigger load immediately if possible via App? 
-                                                            // handleChange updates local settings, but parent updates on Save.
-                                                            // We want to verify it loads? 
-                                                            // For now, just set path. Parent handles actual loading via App.tsx effect on settings change.
-                                                        }
+                                                        if (path) handleChange('avatarPath', path);
                                                     }
                                                 }}
-                                                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                                                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded transition-colors whitespace-nowrap"
                                             >
                                                 Load
                                             </button>
                                         </div>
+                                        <div className="text-[10px] text-white/40">Supported: .emgl, .zip</div>
                                     </div>
-                                </div>
 
-                                {/* Scale Slider */}
-                                <div className="space-y-2">
-                                    <div className="flex justify-between">
-                                        <Label>Scale</Label>
-                                        <span className="text-xs font-mono">{localSettings.avatarScale?.toFixed(1) || '1.0'}x</span>
+                                    {/* Scale Slider */}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between">
+                                            <Label>Scale</Label>
+                                            <span className="text-xs font-mono">{localSettings.avatarScale?.toFixed(1) || '1.0'}x</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="0.1"
+                                            max="2.0"
+                                            step="0.1"
+                                            value={localSettings.avatarScale || 1.0}
+                                            onChange={(e) => handleChange('avatarScale', parseFloat(e.target.value))}
+                                            className="w-full accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                                        />
                                     </div>
-                                    <input
-                                        type="range"
-                                        min="0.1"
-                                        max="2.0"
-                                        step="0.1"
-                                        value={localSettings.avatarScale || 1.0}
-                                        onChange={(e) => handleChange('avatarScale', parseFloat(e.target.value))}
-                                        className="w-full accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                                    />
-                                </div>
 
-                                {/* Reset Position */}
-                                <div className="pt-2">
-                                    <button
-                                        onClick={() => handleChange('avatarPosition', { x: 0, y: 0 })}
-                                        className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-white/70 transition-colors"
-                                    >
-                                        Reset Position
-                                    </button>
+                                    {/* Reset Position */}
+                                    <div className="pt-2">
+                                        <button
+                                            onClick={() => handleChange('avatarPosition', { x: 0, y: 0 })}
+                                            className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-white/70 transition-colors"
+                                        >
+                                            Reset Position
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

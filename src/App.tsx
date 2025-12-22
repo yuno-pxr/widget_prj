@@ -78,6 +78,7 @@ function App() {
   const ttsProviderRef = useRef(ttsProvider);
   const ttsSummaryPromptRef = useRef(ttsSummaryPrompt);
   const ttsSummaryThresholdRef = useRef(ttsSummaryThreshold);
+  const lastAutoScaledPath = useRef<string | null>(null);
 
   useEffect(() => {
     ttsEnabledRef.current = ttsEnabled;
@@ -109,6 +110,10 @@ function App() {
   const [avatarPath, setAvatarPath] = useState('');
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [isThinking, setIsThinking] = useState(false);
+  const [isSleeping, setIsSleeping] = useState(false);
+  const [sleepTimeout, setSleepTimeout] = useState(30000); // Default 30s
+  const [alwaysOnTop, setAlwaysOnTop] = useState(true); // Default true
+  const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
 
 
   // Update ref when state changes
@@ -234,10 +239,13 @@ function App() {
           if (settings.wakeWordTimeout) setWakeWordTimeout(settings.wakeWordTimeout);
           if (settings.developerMode !== undefined) setDeveloperMode(settings.developerMode);
 
+
           // Avatar Settings
           if (settings.avatarVisible !== undefined) setAvatarVisible(settings.avatarVisible);
           if (settings.avatarScale !== undefined) setAvatarScale(settings.avatarScale);
           if (settings.avatarPosition) setAvatarPosition(settings.avatarPosition);
+          if (settings.sleepTimeout !== undefined) setSleepTimeout(settings.sleepTimeout);
+          if (settings.alwaysOnTop !== undefined) setAlwaysOnTop(settings.alwaysOnTop);
           if (settings.avatarPath && window.electronAPI.loadAvatar) {
             window.electronAPI.loadAvatar(settings.avatarPath)
               .then(data => setAvatarData(data))
@@ -1466,11 +1474,18 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     if (newSettings.avatarVisible !== undefined) setAvatarVisible(newSettings.avatarVisible);
     if (newSettings.avatarScale !== undefined) setAvatarScale(newSettings.avatarScale);
     if (newSettings.avatarPosition !== undefined) setAvatarPosition(newSettings.avatarPosition);
+    if (newSettings.sleepTimeout !== undefined) setSleepTimeout(newSettings.sleepTimeout);
+    if (newSettings.alwaysOnTop !== undefined) setAlwaysOnTop(newSettings.alwaysOnTop);
     if (newSettings.avatarPath !== undefined) {
       setAvatarPath(newSettings.avatarPath);
       loadAvatar(newSettings.avatarPath);
+      // Initialize auto-scale ref to prevent overwriting saved scale on startup
+      lastAutoScaledPath.current = newSettings.avatarPath;
     }
   };
+
+  // Debug State
+  const [debugPattern, setDebugPattern] = useState<string | null>(null);
 
   // Save settings when changed
   useEffect(() => {
@@ -1484,7 +1499,8 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
         ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
         inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider,
         wakeWordTimeout, developerMode, logDirectory,
-        avatarVisible, avatarScale, avatarPosition, avatarPath
+        avatarVisible, avatarScale, avatarPosition, avatarPath,
+        sleepTimeout, alwaysOnTop
       };
 
       const timeoutId = setTimeout(() => {
@@ -1501,8 +1517,36 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
     inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider,
     wakeWordTimeout, developerMode, logDirectory,
-    avatarVisible, avatarScale, avatarPosition, avatarPath
+    avatarVisible, avatarScale, avatarPosition, avatarPath,
+    sleepTimeout, alwaysOnTop
   ]);
+
+  // Idle Timer Logic
+  const resetIdleTimer = () => {
+    setIsSleeping(false);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (sleepTimeout > 0 && !isSpeaking && !isThinking) {
+      idleTimerRef.current = setTimeout(() => {
+        setIsSleeping(true);
+      }, sleepTimeout);
+    }
+  };
+
+  useEffect(() => {
+    // Events to reset idle
+    window.addEventListener('mousemove', resetIdleTimer);
+    window.addEventListener('keydown', resetIdleTimer);
+    window.addEventListener('mousedown', resetIdleTimer);
+    // Reset on state changes
+    resetIdleTimer();
+
+    return () => {
+      window.removeEventListener('mousemove', resetIdleTimer);
+      window.removeEventListener('keydown', resetIdleTimer);
+      window.removeEventListener('mousedown', resetIdleTimer);
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    };
+  }, [sleepTimeout, isSpeaking, isThinking]);
 
   // --- Avatar Mode Logic (Effects) ---
   useEffect(() => {
@@ -1559,20 +1603,20 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
         developerMode: developerMode
       });
     }
-  }, [developerMode, isAvatarMode, avatarPath, avatarVisible, avatarScale, isSpeaking, isThinking]);
+  }, [developerMode, isAvatarMode, avatarPath, avatarVisible, avatarScale, isSpeaking, isThinking, isSleeping, alwaysOnTop]);
 
   // Manage click-through for Avatar Window
   useEffect(() => {
     if (isAvatarMode && window.electronAPI.setIgnoreMouseEvents) {
-      if (!avatarData || !avatarVisible) {
-        // Transparent / No Avatar -> Pass clicks through
+      if (!avatarData || !avatarVisible || isSleeping) { // Add isSleeping to ignore mouse events
+        // Transparent / No Avatar / Sleeping -> Pass clicks through
         window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
       } else {
-        // Avatar Present -> Capture clicks (for drag)
+        // Avatar Present & Active -> Capture clicks (for drag)
         window.electronAPI.setIgnoreMouseEvents(false);
       }
     }
-  }, [isAvatarMode, avatarData, avatarVisible]);
+  }, [isAvatarMode, avatarData, avatarVisible, isSleeping]);
 
 
   // If Avatar Mode, Render ONLY Avatar (Short-circuit return)
@@ -1592,9 +1636,75 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
               position={avatarPosition}
               visible={avatarVisible}
               draggableWindow={true}
-              onImageLoaded={(dims) => setImageDimensions(dims)}
+              developerMode={developerMode}
+              debugPattern={debugPattern}
+              onImageLoaded={(dims) => {
+                setImageDimensions(dims);
+                // Auto-scale if new avatar path
+                if (avatarPath && avatarPath !== lastAutoScaledPath.current) {
+                  const targetHeight = 500;
+                  if (dims.height > targetHeight) {
+                    const newScale = parseFloat((targetHeight / dims.height).toFixed(2));
+                    setAvatarScale(newScale);
+                  } else {
+                    // Optional: Reset to 1.0 if small enough? No, respect user.
+                    // But for NEW avatar, maybe default to 1.0?
+                    setAvatarScale(1.0);
+                  }
+                  lastAutoScaledPath.current = avatarPath;
+                }
+              }}
               onPositionChange={() => { }}
+              isSleeping={isSleeping}
+              onActivity={resetIdleTimer}
             />
+
+            {/* Debug UI Overlay */}
+            {/* Avatar Mode Overlay for Sleep/Hide */}
+            {isAvatarMode && (
+              <div
+                className={`fixed top-0 left-0 w-full h-full flex items-center justify-center transition-all duration-300 ${isSleeping ? 'opacity-80 grayscale' : ''}`}
+                style={{
+                  WebkitAppRegion: isSleeping ? 'no-drag' : 'drag', // Allow clicks when sleeping
+                } as any}
+              >
+                <div style={{ WebkitAppRegion: 'no-drag' } as any} className="absolute top-2 right-2 flex gap-2 z-50 opacity-0 hover:opacity-100 transition-opacity">
+                  <button onClick={() => setAvatarVisible(false)} className="bg-black/50 p-1 rounded hover:bg-black/70 text-white">Hide</button>
+                </div>
+              </div>
+            )}
+            {developerMode && avatarData && (
+              <div
+                className="absolute top-0 left-0 bg-black/80 text-white text-[10px] p-2 rounded pointer-events-auto max-h-[80vh] overflow-y-auto z-50 m-2 custom-scrollbar border border-white/10"
+                style={{ WebkitAppRegion: 'no-drag' } as any}
+              >
+                <div className="font-bold mb-2 pb-1 border-b border-white/20">Debug: Patterns</div>
+                <div className="space-y-1">
+                  <label className="flex items-center gap-2 cursor-pointer hover:bg-white/10 p-1 rounded">
+                    <input
+                      type="radio"
+                      name="pattern"
+                      checked={debugPattern === null}
+                      onChange={() => setDebugPattern(null)}
+                      className="accent-blue-500"
+                    />
+                    <span className={debugPattern === null ? 'text-blue-400' : 'text-white/70'}>AUTO (Default)</span>
+                  </label>
+                  {Object.keys(avatarData.mapping).map(key => (
+                    <label key={key} className="flex items-center gap-2 cursor-pointer hover:bg-white/10 p-1 rounded">
+                      <input
+                        type="radio"
+                        name="pattern"
+                        checked={debugPattern === key}
+                        onChange={() => setDebugPattern(key)}
+                        className="accent-blue-500"
+                      />
+                      <span className={debugPattern === key ? 'text-blue-400' : 'text-white/70'}>{key}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

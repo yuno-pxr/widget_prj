@@ -7,11 +7,16 @@ interface AvatarLayerMap {
     mouthClosed?: string;
     eyesClosed?: string;
     mouthOpenEyesClosed?: string;
+    isSleep?: boolean;
 }
 
 interface AvatarData {
     assetsRoot: string;
     mapping: Record<string, AvatarLayerMap>;
+    width?: number;
+    height?: number;
+    anchorX?: number;
+    anchorY?: number;
 }
 
 interface AvatarRendererProps {
@@ -23,7 +28,9 @@ interface AvatarRendererProps {
     onPositionChange?: (pos: { x: number; y: number }) => void;
     draggableWindow?: boolean;
     onImageLoaded?: (dimensions: { width: number; height: number }) => void;
+    onActivity?: () => void;
     isThinking?: boolean;
+    isSleeping?: boolean;
 }
 
 export const AvatarRenderer = ({
@@ -35,8 +42,12 @@ export const AvatarRenderer = ({
     onPositionChange,
     draggableWindow,
     onImageLoaded,
-    isThinking
-}: AvatarRendererProps) => {
+    onActivity,
+    isThinking,
+    isSleeping,
+    developerMode,
+    debugPattern
+}: AvatarRendererProps & { developerMode?: boolean; debugPattern?: string | null; onActivity?: () => void }) => {
 
     // State
     const [blinkState, setBlinkState] = useState<'open' | 'closed'>('open');
@@ -53,21 +64,44 @@ export const AvatarRenderer = ({
 
     // Blink Logic (standard)
     useEffect(() => {
-        if (!visible || !avatarData || isThinking) return; // Stop blinking if thinking? Or close eyes.
+        if (!visible || !avatarData || isThinking || isSleeping) return;
+
         let timeoutId: NodeJS.Timeout;
         const blinkLoop = () => {
-            const nextBlink = Math.random() * 4000 + 2000;
+            // 30fps frames: 48 - 95 frames
+            const minMs = 48 * 33.33; // ~1600ms
+            const maxMs = 95 * 33.33; // ~3166ms
+            const nextBlink = Math.random() * (maxMs - minMs) + minMs;
+
             timeoutId = setTimeout(() => {
-                setBlinkState('closed');
-                setTimeout(() => {
-                    setBlinkState('open');
-                    blinkLoop();
-                }, 150); // Blink duration
+                // Determine single or double blink
+                const isDouble = Math.random() < 0.2; // 20% chance
+
+                const performBlink = () => {
+                    setBlinkState('closed');
+                    setTimeout(() => {
+                        setBlinkState('open');
+
+                        if (isDouble) {
+                            setTimeout(() => {
+                                setBlinkState('closed');
+                                setTimeout(() => {
+                                    setBlinkState('open');
+                                    blinkLoop();
+                                }, 100);
+                            }, 100); // Short interval between blinks
+                        } else {
+                            blinkLoop();
+                        }
+                    }, 150); // Blink duration
+                };
+
+                performBlink();
             }, nextBlink);
         };
         blinkLoop();
         return () => clearTimeout(timeoutId);
-    }, [visible, avatarData, isThinking]);
+    }, [visible, avatarData, isThinking, isSleeping]);
 
     // Speech Modulation & Random Expressions
     useEffect(() => {
@@ -108,7 +142,12 @@ export const AvatarRenderer = ({
 
     // Drag Logic
     const handleMouseDown = (e: React.MouseEvent) => {
+        // Signal activity to parent (wake from sleep)
+        if (onActivity) onActivity();
+
         if (draggableWindow) return; // Window handles drag
+        if ((e.target as HTMLElement).closest('.debug-ui')) return; // Allow interaction with debug UI
+
         if (e.button !== 0) return; // Left click only
         setIsDragging(true);
         dragOffset.current = {
@@ -148,8 +187,8 @@ export const AvatarRenderer = ({
     if (!visible || !avatarData) return null;
 
     // Resolve Image
-    let displayPattern = currentPattern;
-    if (isThinking && !isSpeaking) {
+    let displayPattern = debugPattern || currentPattern;
+    if (!debugPattern && isThinking && !isSpeaking) {
         // Find a thinking pattern if possible, else close eyes
         const thinkingKeys = Object.keys(avatarData.mapping).filter(k => k.includes('think'));
         if (thinkingKeys.length > 0) {
@@ -157,6 +196,13 @@ export const AvatarRenderer = ({
         } else {
             displayPattern = 'idle.neutral'; // Fallback to neutral but force eyes closed via logic below
         }
+    } else if (!debugPattern && isSleeping && !isSpeaking) {
+        // Find a sleeping pattern if possible
+        const sleepKeys = Object.keys(avatarData.mapping).filter(k => k.includes('sleep'));
+        if (sleepKeys.length > 0) {
+            displayPattern = sleepKeys[0];
+        }
+        // If no sleep pattern, keeps current pattern (idle) but blinking logic forces eyes closed
     }
 
     const mapping = avatarData.mapping[displayPattern] || Object.values(avatarData.mapping)[0];
@@ -170,22 +216,33 @@ export const AvatarRenderer = ({
         return `avatar://current/${relPath}`;
     };
 
-    let imageUrl = getPath('base'); // Default
+    // Fallback: If 'base' is missing, use the first available value in the mapping
+    let imageUrl = getPath('base');
+    if (!imageUrl && mapping) {
+        // Find first valid string value
+        for (const key of ['mouthClosed', 'mouthOpen', 'eyesClosed', 'mouthOpenEyesClosed'] as const) {
+            const p = getPath(key);
+            if (p) {
+                imageUrl = p;
+                break;
+            }
+        }
+    }
 
-    const effectiveBlinkState = (isThinking && !isSpeaking) ? 'closed' : blinkState;
+    const effectiveBlinkState = (isThinking && !isSpeaking) || (isSleeping && !isSpeaking) ? 'closed' : blinkState;
     const effectiveMouthOpen = isSpeaking ? (mouthOpenState) : false; // If speaking, use modulated state.
 
     if (effectiveMouthOpen) {
         if (effectiveBlinkState === 'closed') {
-            imageUrl = getPath('mouthOpenEyesClosed') || getPath('mouthOpen') || getPath('base');
+            imageUrl = getPath('mouthOpenEyesClosed') || getPath('mouthOpen') || imageUrl;
         } else {
-            imageUrl = getPath('mouthOpen') || getPath('base');
+            imageUrl = getPath('mouthOpen') || imageUrl;
         }
     } else {
         if (effectiveBlinkState === 'closed') {
-            imageUrl = getPath('eyesClosed') || getPath('base');
+            imageUrl = getPath('eyesClosed') || imageUrl;
         } else {
-            imageUrl = getPath('mouthClosed') || getPath('base');
+            imageUrl = getPath('mouthClosed') || imageUrl;
         }
     }
 

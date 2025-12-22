@@ -111,6 +111,9 @@ ipcMain.on('update-avatar-state', (event, state) => {
     cachedAvatarState = state; // Cache for new windows
     if (avatarWindow && !avatarWindow.isDestroyed()) {
         avatarWindow.webContents.send('avatar-state-updated', state);
+        if (state.alwaysOnTop !== undefined) {
+            avatarWindow.setAlwaysOnTop(state.alwaysOnTop, 'screen-saver');
+        }
     }
 });
 

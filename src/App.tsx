@@ -9,8 +9,13 @@ import { InputArea } from './components/InputArea';
 import { HistoryList, type HistoryItem } from './components/HistoryList';
 import { SettingsModal } from './components/SettingsModal';
 import { DateDisplay } from './components/DateDisplay';
+import { AvatarRenderer } from './components/AvatarRenderer';
 
 function App() {
+  // Check for Avatar Mode
+  const searchParams = new URLSearchParams(window.location.search);
+  const isAvatarMode = searchParams.get('mode') === 'avatar';
+
   const [inputText, setInputText] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [isProcessing, setIsProcessing] = useState(false);
@@ -69,7 +74,6 @@ function App() {
   const [isSpeaking, setIsSpeaking] = useState(false); // For Conditional Stop Button
 
   // Refs for stale closure prevention
-  // Refs for stale closure prevention
   const ttsEnabledRef = useRef(ttsEnabled);
   const ttsProviderRef = useRef(ttsProvider);
   const ttsSummaryPromptRef = useRef(ttsSummaryPrompt);
@@ -93,19 +97,107 @@ function App() {
   const [developerMode, setDeveloperMode] = useState(false);
   const [isWakeWordActive, setIsWakeWordActive] = useState(false);
 
-  const [appVersion, setAppVersion] = useState('0.10.4');
+  const [appVersion, setAppVersion] = useState('0.10.5');
 
   const isClipboardEnabledRef = useRef(isClipboardEnabled);
+
+  // Avatar Settings State (Shared)
+  const [avatarData, setAvatarData] = useState<any>(null);
+  const [avatarVisible, setAvatarVisible] = useState(false);
+  const [avatarScale, setAvatarScale] = useState(1);
+  const [avatarPosition, setAvatarPosition] = useState({ x: 0, y: 0 });
+  const [avatarPath, setAvatarPath] = useState('');
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+  const [isThinking, setIsThinking] = useState(false);
+
 
   // Update ref when state changes
   useEffect(() => {
     isClipboardEnabledRef.current = isClipboardEnabled;
   }, [isClipboardEnabled]);
 
+  const loadAvatar = async (path: string) => {
+    try {
+      if (window.electronAPI && window.electronAPI.loadAvatar) {
+        const data = await window.electronAPI.loadAvatar(path);
+        setAvatarData(data);
+      }
+    } catch (e) {
+      console.error("Failed to load avatar:", e);
+    }
+  };
+
   const isRecordingRef = useRef(isRecording);
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
+
+  // --- Avatar Mode Logic ---
+  useEffect(() => {
+    if (isAvatarMode) {
+      document.body.style.backgroundColor = 'transparent';
+      document.documentElement.style.backgroundColor = 'transparent';
+
+      // Listen for updates from Main Window
+      const removeListener = window.electronAPI.onAvatarStateUpdate((state: any) => {
+        if (state.path && state.path !== avatarPath) {
+          setAvatarPath(state.path);
+          loadAvatar(state.path); // Function needs to be lifted or available
+        }
+        if (state.visible !== undefined) setAvatarVisible(state.visible);
+        if (state.scale !== undefined) setAvatarScale(state.scale);
+        if (state.isSpeaking !== undefined) setIsSpeaking(state.isSpeaking);
+      });
+
+      // Fetch initial state
+      window.electronAPI.getAvatarState().then((state: any) => {
+        if (state) {
+          if (state.path) { setAvatarPath(state.path); loadAvatar(state.path); }
+          if (state.visible !== undefined) setAvatarVisible(state.visible);
+          if (state.scale !== undefined) setAvatarScale(state.scale);
+          if (state.isSpeaking !== undefined) setIsSpeaking(state.isSpeaking);
+          if (state.isThinking !== undefined) setIsThinking(state.isThinking);
+          if (state.developerMode !== undefined) setDeveloperMode(state.developerMode);
+        }
+      }).catch(console.error);
+
+      return removeListener;
+    } else {
+      // Main Window: Broadcast updates
+      // We defer this until after settings load
+    }
+  }, [isAvatarMode, avatarPath]);
+
+  // Sync state to Avatar Window (Only if Main Window)
+  useEffect(() => {
+    if (!isAvatarMode && window.electronAPI.updateAvatarState) {
+      window.electronAPI.updateAvatarState({
+        path: avatarPath,
+        visible: avatarVisible,
+        scale: avatarScale,
+        isSpeaking: isSpeaking,
+        isThinking: isThinking
+      });
+    }
+  }, [avatarPath, avatarVisible, avatarScale, isSpeaking, isThinking, isAvatarMode]);
+
+
+
+
+  useEffect(() => {
+    // Load default avatar if exists (async)
+    // We only do this if no avatar is loaded? 
+    // Or if settings say "load default".
+    // For now, let's try to load 'src/assets/meimei.emgl' if we can resolve it.
+    // Since we are in production/electron, we might need a path relative to valid resource.
+    const loadDefault = async () => {
+      if (window.electronAPI) {
+        // In dev, we might know the path. In prod, it's harder.
+        // We'll skip auto-load for now unless we have a path stored in settings.
+      }
+    };
+    loadDefault();
+  }, []);
 
   useEffect(() => {
     // Load settings - Run ONCE on mount
@@ -141,6 +233,16 @@ function App() {
           if (settings.transcriptionProvider) setTranscriptionProvider(settings.transcriptionProvider);
           if (settings.wakeWordTimeout) setWakeWordTimeout(settings.wakeWordTimeout);
           if (settings.developerMode !== undefined) setDeveloperMode(settings.developerMode);
+
+          // Avatar Settings
+          if (settings.avatarVisible !== undefined) setAvatarVisible(settings.avatarVisible);
+          if (settings.avatarScale !== undefined) setAvatarScale(settings.avatarScale);
+          if (settings.avatarPosition) setAvatarPosition(settings.avatarPosition);
+          if (settings.avatarPath && window.electronAPI.loadAvatar) {
+            window.electronAPI.loadAvatar(settings.avatarPath)
+              .then(data => setAvatarData(data))
+              .catch(err => console.error("Failed to load saved avatar:", err));
+          }
 
           if (settings.provider) setProvider(settings.provider);
 
@@ -326,11 +428,6 @@ function App() {
         // Extract command (naive approach: everything after wake word?)
         // Or just send whole thing? The previous code did substring.
         // Let's keep strict substring if it starts with it?
-        // Actually, 'includes' allows mid-sentence wake word. 
-        // Let's fallback to strict 'startsWith' for cleaner command extraction if we can,
-        // or just use the whole text if it's simple.
-        // Previous logic: startsWith.
-        // New logic in handleMicClick was 'includes'. I'll stick to 'startsWith' for continuous to avoid accidental triggers?
         // But user might say "Hey Computer do X".
         // Let's use includes check but extract optimally.
 
@@ -707,6 +804,7 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
 
     if (!ttsEnabledRef.current) {
       console.log("TTS Disabled. Aborting speakText.");
+      setIsThinking(false); // Unlock if TTS disabled
       return;
     }
     stopSpeaking();
@@ -738,6 +836,7 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
       }
     }
 
+    setIsThinking(false); // Unlock animation as speech starts
     setIsSpeaking(true); // START SPEAKING
 
     if (ttsProviderRef.current === 'browser') {
@@ -1122,6 +1221,7 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
     aiService.updateSettings({ apiKey, geminiApiKey, geminiModelName, openaiApiKey, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName });
 
     setIsProcessing(true);
+    setIsThinking(true); // Start locking animation
     // If not override, clear input. If override (voice), we don't clear manual input (or maybe we show it?)
     if (overrideText === undefined) {
       setInputText('');
@@ -1160,6 +1260,7 @@ Instruction: If the input is already in ${targetLanguage}, output "NO_TRANSLATIO
       setHistory(prev => [...prev, responseItem]);
       if (window.electronAPI) window.electronAPI.addHistory(responseItem);
       setIsProcessing(false);
+      setIsThinking(false); // Unset thinking for math results
       return;
     }
 
@@ -1234,6 +1335,7 @@ IMPORTANT: You must accept this date and time as the absolute truth for this ses
 
       } else {
         setIsProcessing(false);
+        setIsThinking(false); // Unset thinking if no response
       }
 
 
@@ -1248,9 +1350,11 @@ IMPORTANT: You must accept this date and time as the absolute truth for this ses
         category: 'chat'
       };
       setHistory(prev => [...prev, errorItem]);
+      setIsThinking(false); // Unlock on error
     } finally {
       setIsProcessing(false);
       setAbortController(null);
+      // setIsThinking(false); // This is handled by speakText or error block
     }
   };
 
@@ -1261,6 +1365,7 @@ IMPORTANT: You must accept this date and time as the absolute truth for this ses
       abortController.abort();
       setAbortController(null);
       setIsProcessing(false);
+      setIsThinking(false); // Unset thinking on manual stop
     }
   };
 
@@ -1281,6 +1386,7 @@ IMPORTANT: You must accept this date and time as the absolute truth for this ses
 
   const handleSummarize = async (text: string) => {
     setIsProcessing(true);
+    setIsThinking(true); // Start thinking for summarization
     const controller = new AbortController();
     setAbortController(controller);
 
@@ -1309,6 +1415,7 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
       console.error("Summarization failed:", error);
     } finally {
       setIsProcessing(false);
+      setIsThinking(false); // Unset thinking after summarization
       setAbortController(null);
     }
   };
@@ -1354,12 +1461,152 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     if (newSettings.wakeWordTimeout !== undefined) setWakeWordTimeout(newSettings.wakeWordTimeout);
     if (newSettings.developerMode !== undefined) setDeveloperMode(newSettings.developerMode);
     if (newSettings.logDirectory !== undefined) setLogDirectory(newSettings.logDirectory);
+
+    // Avatar updates
+    if (newSettings.avatarVisible !== undefined) setAvatarVisible(newSettings.avatarVisible);
+    if (newSettings.avatarScale !== undefined) setAvatarScale(newSettings.avatarScale);
+    if (newSettings.avatarPosition !== undefined) setAvatarPosition(newSettings.avatarPosition);
+    if (newSettings.avatarPath !== undefined) {
+      setAvatarPath(newSettings.avatarPath);
+      loadAvatar(newSettings.avatarPath);
+    }
   };
+
+  // Save settings when changed
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.saveSettings) {
+      const settingsToSave = {
+        apiKey, geminiApiKey, geminiModelName, groqApiKey, openaiApiKey,
+        isClipboardEnabled,
+        themeColor, provider,
+        localBaseUrl, localModelName, openaiBaseUrl, openaiModelName,
+        targetLanguage, skinId, systemPrompt, additionalPrompt,
+        ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
+        inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider,
+        wakeWordTimeout, developerMode, logDirectory,
+        avatarVisible, avatarScale, avatarPosition, avatarPath
+      };
+
+      const timeoutId = setTimeout(() => {
+        window.electronAPI.saveSettings(settingsToSave);
+      }, 1000); // 1s debounce
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [
+    apiKey, geminiApiKey, geminiModelName, groqApiKey, openaiApiKey,
+    isClipboardEnabled, themeColor, provider,
+    localBaseUrl, localModelName, openaiBaseUrl, openaiModelName,
+    targetLanguage, skinId, systemPrompt, additionalPrompt,
+    ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
+    inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider,
+    wakeWordTimeout, developerMode, logDirectory,
+    avatarVisible, avatarScale, avatarPosition, avatarPath
+  ]);
+
+  // --- Avatar Mode Logic (Effects) ---
+  useEffect(() => {
+    if (isAvatarMode) {
+      document.body.style.backgroundColor = 'transparent';
+      document.documentElement.style.backgroundColor = 'transparent';
+
+      // Listen for updates from Main Window
+      const removeListener = window.electronAPI.onAvatarStateUpdate((state: any) => {
+        if (state.path && state.path !== avatarPath) {
+          setAvatarPath(state.path);
+          loadAvatar(state.path);
+        }
+        if (state.visible !== undefined) setAvatarVisible(state.visible);
+        if (state.scale !== undefined) setAvatarScale(state.scale);
+        if (state.isSpeaking !== undefined) setIsSpeaking(state.isSpeaking);
+        if (state.isThinking !== undefined) setIsThinking(state.isThinking);
+        if (state.developerMode !== undefined) setDeveloperMode(state.developerMode);
+      });
+      return removeListener;
+    }
+  }, [isAvatarMode]);
+
+
+  // Update Window Size on Scale Change
+  useEffect(() => {
+    if (isAvatarMode && imageDimensions.width > 0 && window.electronAPI.resizeAvatarWindow) {
+      window.electronAPI.resizeAvatarWindow(imageDimensions.width * avatarScale, imageDimensions.height * avatarScale);
+    }
+  }, [avatarScale, imageDimensions, isAvatarMode]);
+
+  // Sync state to Avatar Window (Only if Main Window)
+  useEffect(() => {
+    if (!isAvatarMode && window.electronAPI.updateAvatarState) {
+      window.electronAPI.updateAvatarState({
+        path: avatarPath,
+        visible: avatarVisible,
+        scale: avatarScale,
+        isSpeaking: isSpeaking,
+        isThinking: isThinking
+      });
+    }
+  }, [avatarPath, avatarVisible, avatarScale, isSpeaking, isThinking, isAvatarMode]);
+
+  // Supplementary sync for developerMode
+  useEffect(() => {
+    if (!isAvatarMode && window.electronAPI.updateAvatarState) {
+      window.electronAPI.updateAvatarState({
+        path: avatarPath,
+        visible: avatarVisible,
+        scale: avatarScale,
+        isSpeaking: isSpeaking,
+        isThinking: isThinking,
+        developerMode: developerMode
+      });
+    }
+  }, [developerMode, isAvatarMode, avatarPath, avatarVisible, avatarScale, isSpeaking, isThinking]);
+
+  // Manage click-through for Avatar Window
+  useEffect(() => {
+    if (isAvatarMode && window.electronAPI.setIgnoreMouseEvents) {
+      if (!avatarData || !avatarVisible) {
+        // Transparent / No Avatar -> Pass clicks through
+        window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
+      } else {
+        // Avatar Present -> Capture clicks (for drag)
+        window.electronAPI.setIgnoreMouseEvents(false);
+      }
+    }
+  }, [isAvatarMode, avatarData, avatarVisible]);
+
+
+  // If Avatar Mode, Render ONLY Avatar (Short-circuit return)
+  if (isAvatarMode) {
+    return (
+      <div
+        className={`w-screen h-screen overflow-hidden pointer-events-auto ${developerMode ? 'border-2 border-red-500' : ''}`}
+        style={{ background: 'transparent', WebkitAppRegion: 'drag' } as any}
+      >
+        {avatarVisible && avatarData && (
+          <div className="relative">
+            <AvatarRenderer
+              avatarData={avatarData}
+              isSpeaking={isSpeaking}
+              isThinking={isThinking}
+              scale={avatarScale}
+              position={avatarPosition}
+              visible={avatarVisible}
+              draggableWindow={true}
+              onImageLoaded={(dims) => setImageDimensions(dims)}
+              onPositionChange={() => { }}
+            />
+          </div>
+        )}
+
+      </div>
+    );
+  }
 
   const settingsObj = {
     apiKey, geminiApiKey, geminiModelName, groqApiKey, openaiApiKey, isClipboardEnabled, themeColor, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName, targetLanguage, skinId, logDirectory, systemPrompt, additionalPrompt,
     ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
-    inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider, wakeWordTimeout, developerMode
+    inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider, wakeWordTimeout, developerMode,
+    avatarVisible, avatarScale, avatarPosition, avatarData
   };
 
   return (
@@ -1392,6 +1639,7 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden relative">
+        {/* Avatar is now in a separate window, so we don't render it here */}
         <HistoryList
           history={history}
           activeTab={activeTab}

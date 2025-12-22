@@ -19,6 +19,13 @@ export interface ElectronAPI {
     log: (message: string) => void;
     getAvailableSkins: () => Promise<any[]>;
     loadSkin: (skinId: string) => Promise<any>;
+    selectFile: (options?: any) => Promise<string | null>;
+    loadAvatar: (filePath: string) => Promise<any>;
+    updateAvatarState: (state: any) => void;
+    onAvatarStateUpdate: (callback: (state: any) => void) => () => void;
+    getAvatarState: () => Promise<any>;
+    resizeAvatarWindow: (width: number, height: number) => void;
+    setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
 }
 
 declare global {

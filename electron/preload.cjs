@@ -33,4 +33,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     log: (message) => ipcRenderer.send('log', message),
     getAvailableSkins: () => ipcRenderer.invoke('get-available-skins'),
     loadSkin: (skinId) => ipcRenderer.invoke('load-skin', skinId),
+    selectFile: (options) => ipcRenderer.invoke('select-file', options),
+    loadAvatar: (filePath) => ipcRenderer.invoke('load-avatar', filePath),
+    updateAvatarState: (state) => ipcRenderer.send('update-avatar-state', state),
+    onAvatarStateUpdate: (callback) => {
+        const subscription = (_event, state) => callback(state);
+        ipcRenderer.on('avatar-state-updated', subscription);
+        return () => ipcRenderer.removeListener('avatar-state-updated', subscription);
+    },
+    getAvatarState: () => ipcRenderer.invoke('get-avatar-state'),
+    resizeAvatarWindow: (width, height) => ipcRenderer.send('resize-avatar-window', { width, height }),
+    setIgnoreMouseEvents: (ignore, options) => ipcRenderer.send('set-ignore-mouse-events', ignore, options),
 });

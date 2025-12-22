@@ -1,7 +1,7 @@
 {
-  "name": "widget_prj",
+  "name": "monolith-widget",
   "private": true,
-  "version": "0.10.4",
+  "version": "0.11.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -12,7 +12,7 @@
     "electron": "electron .",
     "dev:electron": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron\"",
     "dist": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false ELECTRON_BUILDER_CACHE=./.cache/electron-builder npm run build && electron-builder",
-    "pack": "npm run build && electron-packager . MonolithWidget --platform=win32 --arch=x64 --out=dist_release_v0.10.4 --overwrite --ignore=\"^/src\" --ignore=\"^/\\.git\" --ignore=\"^/\\.cache\" --ignore=\"^/dist_.*\" --ignore=\"^/\\.gemini\" --ignore=\".*\\.zip$\" --ignore=\"^/MonolithWidget-.*\""
+    "pack": "npm run build && electron-packager . MonolithWidget --platform=win32 --arch=x64 --out=dist_release_v0.11.0 --overwrite --ignore=\"^/src\" --ignore=\"^/\\.git\" --ignore=\"^/\\.cache\" --ignore=\"^/dist_.*\" --ignore=\"^/\\.gemini\" --ignore=\".*\\.zip$\" --ignore=\"^/MonolithWidget-.*\""
   },
   "build": {
     "appId": "com.monolith.widget",
@@ -32,6 +32,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@rive-app/react-canvas": "^4.24.0",
+    "adm-zip": "^0.5.16",
     "lottie-react": "^2.4.1",
     "lucide-react": "^0.555.0",
     "openai": "^6.10.0",

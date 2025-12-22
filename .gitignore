@@ -141,3 +141,6 @@ settings.json
 history.json
 
 !.agent/
+
+assets/
+

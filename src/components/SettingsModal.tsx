@@ -41,7 +41,7 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: SettingsModalProps) => {
-    const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'skin' | 'speech' | 'audio'>('ai');
+    const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'skin' | 'sound' | 'avatar'>('ai');
     const { availableSkins, loadSkin } = useSkin();
 
     // Audio Devices
@@ -57,11 +57,9 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
 
     // VoiceVox Speaker State
     const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<{ name: string, styles: { name: string, id: number }[] }[]>([]);
-    const [isFetchingSpeakers, setIsFetchingSpeakers] = useState(false);
     const [voicevoxError, setVoicevoxError] = useState('');
 
     const fetchVoicevoxSpeakers = async () => {
-        setIsFetchingSpeakers(true);
         setVoicevoxError('');
         try {
             const controller = new AbortController();
@@ -79,12 +77,11 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
         } catch (e) {
             setVoicevoxError('Connection failed. Is VoiceVox running?');
         } finally {
-            setIsFetchingSpeakers(false);
         }
     };
 
     useEffect(() => {
-        if (activeTab === 'audio') {
+        if (activeTab === 'sound') {
             navigator.mediaDevices.enumerateDevices().then(devices => {
                 const inputs = devices.filter(d => d.kind === 'audioinput');
                 setAudioDevices(inputs);
@@ -182,7 +179,7 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
         return () => stopMicTest();
     }, []);
 
-    const testSpeaker = () => {
+    const testSpeaker = (_arg?: any) => {
         const audioContext = new AudioContext();
         const oscillator = audioContext.createOscillator();
         const gainNode = audioContext.createGain();
@@ -246,16 +243,99 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
 
                 {/* Tabs */}
                 <div className="flex bg-black/40 border-b border-white/5">
-                    <TabButton id="ai" label="AI MODEL" icon={<Cpu size={12} />} active={activeTab} onClick={setActiveTab} />
-                    <TabButton id="speech" label="SPEECH" icon={<Volume2 size={12} />} active={activeTab} onClick={setActiveTab} />
-                    <TabButton id="audio" label="AUDIO" icon={<Mic size={12} />} active={activeTab} onClick={setActiveTab} />
-                    <TabButton id="skin" label="SKINS" icon={<Layers size={12} />} active={activeTab} onClick={setActiveTab} />
-                    <TabButton id="general" label="GENERAL" icon={<Monitor size={12} />} active={activeTab} onClick={setActiveTab} />
+                    <TabButton id="ai" label="AI Models" icon={<Cpu size={14} />} active={activeTab} onClick={setActiveTab} />
+                    <TabButton id="sound" label="Sound" icon={<Volume2 size={14} />} active={activeTab} onClick={setActiveTab} />
+                    <TabButton id="avatar" label="Avatar" icon={<Monitor size={14} />} active={activeTab} onClick={setActiveTab} />
+                    <TabButton id="skin" label="Appearance" icon={<Layers size={14} />} active={activeTab} onClick={setActiveTab} />
+                    <div className="border-t border-white/5 my-2" />
+                    <TabButton id="general" label="System" icon={<Monitor size={14} />} active={activeTab} onClick={setActiveTab} />
                 </div>
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
 
+                    {/* AVATAR TAB */}
+                    {activeTab === 'avatar' && (
+                        <div className="space-y-6">
+                            <div className="space-y-4">
+                                <h3 className="text-sm font-bold text-white/70 uppercase tracking-wider border-b border-white/10 pb-2 flex items-center gap-2">
+                                    <Monitor size={14} /> Avatar Settings
+                                </h3>
+
+                                {/* Visibility Toggle */}
+                                <div className="flex items-center justify-between">
+                                    <Label>Show Avatar</Label>
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${localSettings.avatarVisible ? 'bg-blue-500/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
+                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${localSettings.avatarVisible ? 'left-4.5' : 'left-0.5'}`} />
+                                        </div>
+                                        <input type="checkbox" checked={localSettings.avatarVisible || false} onChange={(e) => handleChange('avatarVisible', e.target.checked)} className="hidden" />
+                                    </label>
+                                </div>
+
+                                {/* File Loader */}
+                                <div className="p-4 bg-white/5 rounded border border-white/5 space-y-3">
+                                    <div>
+                                        <Label>Avatar File (.emgl / .zip)</Label>
+                                        <div className="text-[10px] text-white/40 mb-2">Import an EMG Lite avatar package.</div>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                value={localSettings.avatarPath ? localSettings.avatarPath.split(/[/\\]/).pop() : ''}
+                                                readOnly
+                                                placeholder="No file loaded"
+                                                className="text-xs flex-1 bg-black/20"
+                                                title={localSettings.avatarPath || "No file loaded"}
+                                            />
+                                            <button
+                                                onClick={async () => {
+                                                    if (window.electronAPI && window.electronAPI.selectFile) {
+                                                        const path = await window.electronAPI.selectFile({ filters: [{ name: 'Avatar Package', extensions: ['emgl', 'zip'] }] });
+                                                        if (path) {
+                                                            handleChange('avatarPath', path);
+                                                            // Also trigger load immediately if possible via App? 
+                                                            // handleChange updates local settings, but parent updates on Save.
+                                                            // We want to verify it loads? 
+                                                            // For now, just set path. Parent handles actual loading via App.tsx effect on settings change.
+                                                        }
+                                                    }
+                                                }}
+                                                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                                            >
+                                                Load
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Scale Slider */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between">
+                                        <Label>Scale</Label>
+                                        <span className="text-xs font-mono">{localSettings.avatarScale?.toFixed(1) || '1.0'}x</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0.1"
+                                        max="2.0"
+                                        step="0.1"
+                                        value={localSettings.avatarScale || 1.0}
+                                        onChange={(e) => handleChange('avatarScale', parseFloat(e.target.value))}
+                                        className="w-full accent-blue-500 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                                    />
+                                </div>
+
+                                {/* Reset Position */}
+                                <div className="pt-2">
+                                    <button
+                                        onClick={() => handleChange('avatarPosition', { x: 0, y: 0 })}
+                                        className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-white/70 transition-colors"
+                                    >
+                                        Reset Position
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {/* AI TAB */}
                     {activeTab === 'ai' && (
                         <div className="space-y-4">
@@ -415,270 +495,176 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                         </div>
                     )}
 
-                    {/* SPEECH TAB */}
-                    {activeTab === 'speech' && (
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between bg-white/5 p-3 rounded border border-white/5">
-                                <div>
-                                    <Label>Text-to-Speech (TTS)</Label>
-                                    <p className="text-[10px] text-white/50">Read aloud AI responses.</p>
-                                </div>
-                                <label className="flex items-center gap-2 cursor-pointer group">
-                                    <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${localSettings.ttsEnabled ? 'bg-blue-500/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
-                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${localSettings.ttsEnabled ? 'left-4.5' : 'left-0.5'}`} />
-                                    </div>
-                                    <input
-                                        type="checkbox"
-                                        checked={localSettings.ttsEnabled || false}
-                                        onChange={(e) => handleChange('ttsEnabled', e.target.checked)}
-                                        className="hidden"
-                                    />
-                                </label>
-                            </div>
-
-                            {localSettings.ttsEnabled && (
-                                <div className="space-y-4">
-                                    <div className="space-y-2">
-                                        <Label>Provider</Label>
-                                        <select
-                                            value={localSettings.ttsProvider || 'browser'}
-                                            onChange={(e) => handleChange('ttsProvider', e.target.value)}
-                                            className="w-full bg-black/20 border border-white/10 rounded p-1.5 text-white text-xs font-mono focus:border-blue-500/50 outline-none"
-                                        >
-                                            <option value="browser" className="bg-neutral-900">Browser Native (Free)</option>
-                                            <option value="openai" className="bg-neutral-900">OpenAI Audio (Paid)</option>
-                                            <option value="voicevox" className="bg-neutral-900">VOICEVOX (Local / External)</option>
-                                        </select>
-                                    </div>
-
-                                    {localSettings.ttsProvider === 'browser' && (
-                                        <div className="p-3 bg-white/5 rounded border border-white/5 text-[10px] text-white/50 italic">
-                                            Uses your operating system's built-in voices.
+                    {/* SOUND TAB (Consolidated Speech + Audio) */}
+                    {activeTab === 'sound' && (
+                        <div className="space-y-6">
+                            {/* SECTION: AUDIO INPUT */}
+                            <div className="space-y-4">
+                                <h3 className="text-sm font-bold text-white/70 uppercase tracking-wider border-b border-white/10 pb-2 flex items-center gap-2">
+                                    <Mic size={14} /> Voice Input
+                                </h3>
+                                <div className="flex items-center justify-between">
+                                    <Label>Enable Voice Input</Label>
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${localSettings.voiceInputEnabled ? 'bg-red-500/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
+                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${localSettings.voiceInputEnabled ? 'left-4.5' : 'left-0.5'}`} />
                                         </div>
-                                    )}
+                                        <input
+                                            type="checkbox"
+                                            checked={localSettings.voiceInputEnabled || false}
+                                            onChange={(e) => handleChange('voiceInputEnabled', e.target.checked)}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                </div>
 
-                                    {localSettings.ttsProvider === 'openai' && (
+                                {localSettings.voiceInputEnabled && (
+                                    <>
+                                        {/* Wake Word Config */}
+                                        <div className="p-3 bg-white/5 rounded border border-white/5 space-y-3">
+                                            <div>
+                                                <Label>Wake Word (Offline)</Label>
+                                                <div className="text-[10px] text-white/40 mb-1">Phrase to activate listening</div>
+                                                <Input
+                                                    value={localSettings.wakeWord || 'Computer'}
+                                                    onChange={(e: any) => handleChange('wakeWord', e.target.value)}
+                                                    placeholder="e.g. Computer"
+                                                    className="text-xs"
+                                                />
+                                            </div>
+                                            <div>
+                                                <Label>Wake Word Timeout (ms)</Label>
+                                                <Input type="number" value={localSettings.wakeWordTimeout || 3000} onChange={(e: any) => handleChange('wakeWordTimeout', parseInt(e.target.value))} className="text-xs" />
+                                            </div>
+                                        </div>
+
                                         <div className="space-y-2">
-                                            <Label>Voice</Label>
+                                            <Label>Transcription Model</Label>
                                             <select
-                                                value={localSettings.ttsVoice || 'alloy'}
-                                                onChange={(e) => handleChange('ttsVoice', e.target.value)}
+                                                value={localSettings.transcriptionProvider || 'native'}
+                                                onChange={(e) => handleChange('transcriptionProvider', e.target.value)}
                                                 className="w-full bg-black/20 border border-white/10 rounded p-1.5 text-white text-xs font-mono focus:border-blue-500/50 outline-none"
                                             >
-                                                <option value="alloy" className="bg-neutral-900">Alloy</option>
-                                                <option value="echo" className="bg-neutral-900">Echo</option>
-                                                <option value="fable" className="bg-neutral-900">Fable</option>
-                                                <option value="onyx" className="bg-neutral-900">Onyx</option>
-                                                <option value="nova" className="bg-neutral-900">Nova</option>
-                                                <option value="shimmer" className="bg-neutral-900">Shimmer</option>
+                                                <option value="native">Browser Native (WebSpeech)</option>
+                                                <option value="groq">Groq (Whisper)</option>
+                                                <option value="openai">OpenAI (Whisper)</option>
                                             </select>
                                         </div>
-                                    )}
 
-                                    {localSettings.ttsProvider === 'voicevox' && (
-                                        <div className="space-y-3">
-                                            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-200">
-                                                Requires VOICEVOX engine running at <code>http://localhost:50021</code>.
+                                        {localSettings.transcriptionProvider === 'groq' && (
+                                            <div className="space-y-1 bg-white/5 p-3 rounded border border-white/5">
+                                                <Label>Groq API Key</Label>
+                                                <Input
+                                                    type="password"
+                                                    value={localSettings.groqApiKey || ''}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange('groqApiKey', e.target.value)}
+                                                    placeholder="gsk_..."
+                                                />
                                             </div>
+                                        )}
 
-                                            <div className="space-y-2">
-                                                <Label>Speaker Selection</Label>
-
-                                                {/* Connection / Refresh */}
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    <button
-                                                        onClick={fetchVoicevoxSpeakers}
-                                                        disabled={isFetchingSpeakers}
-                                                        className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded text-xs text-white transition-colors flex items-center gap-2"
-                                                    >
-                                                        {isFetchingSpeakers ? 'Connecting...' : (voicevoxSpeakers.length > 0 ? 'Refresh Speakers' : 'Connect to Localhost')}
-                                                    </button>
-                                                    {voicevoxError && <span className="text-red-400 text-[10px]">{voicevoxError}</span>}
-                                                </div>
-
-                                                {/* Dropdown (if loaded) or Manual Input (fallback) */}
-                                                {voicevoxSpeakers.length > 0 ? (
-                                                    <select
-                                                        value={localSettings.ttsVoice || ''}
-                                                        onChange={(e) => handleChange('ttsVoice', e.target.value)}
-                                                        className="w-full bg-black/20 border border-white/10 rounded p-1.5 text-white text-xs font-mono focus:border-blue-500/50 outline-none"
-                                                    >
-                                                        <option value="">Select a Speaker</option>
-                                                        {voicevoxSpeakers.map(speaker => (
-                                                            <optgroup key={speaker.name} label={speaker.name}>
-                                                                {speaker.styles.map(style => (
-                                                                    <option key={style.id} value={style.id}>
-                                                                        {speaker.name} ({style.name})
-                                                                    </option>
-                                                                ))}
-                                                            </optgroup>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <Input
-                                                        type="number"
-                                                        value={localSettings.ttsVoice || '1'}
-                                                        onChange={(e: any) => handleChange('ttsVoice', e.target.value)}
-                                                        placeholder="e.g. 1 (Zundamon), 2 (Metan)..."
-                                                    />
-                                                )}
-                                            </div>
+                                        <div className="space-y-2">
+                                            <Label>Input Device</Label>
+                                            <select
+                                                value={localSettings.inputDeviceId || ''}
+                                                onChange={(e) => handleChange('inputDeviceId', e.target.value)}
+                                                className="w-full bg-black/20 border border-white/10 rounded p-1.5 text-white text-xs font-mono focus:border-blue-500/50 outline-none"
+                                            >
+                                                <option value="">Default</option>
+                                                {audioDevices.map(device => (
+                                                    <option key={device.deviceId} value={device.deviceId}>
+                                                        {device.label || `Microphone ${device.deviceId.slice(0, 5)}...`}
+                                                    </option>
+                                                ))}
+                                            </select>
                                         </div>
-                                    )}
 
-                                    <div className="space-y-2 pt-2 border-t border-white/10">
-                                        <Label>TTS Summary Prompt (For Long Text)</Label>
-                                        <textarea
-                                            value={localSettings.ttsSummaryPrompt || ''}
-                                            onChange={(e) => handleChange('ttsSummaryPrompt', e.target.value)}
-                                            placeholder="e.g. Summarize the following text in under 400 characters for speech."
-                                            className="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white h-20 focus:outline-none focus:border-blue-500/50 resize-none"
-                                        />
-                                        <p className="text-[10px] text-white/40">Used when text exceeds the max length. Defines how to summarize it for reading.</p>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                        <Label>Max Characters before Summary</Label>
-                                        <Input
-                                            type="number"
-                                            value={localSettings.ttsSummaryThreshold ?? 400}
-                                            onChange={(e: any) => handleChange('ttsSummaryThreshold', e.target.value === '' ? 0 : parseInt(e.target.value))}
-                                            placeholder="400"
-                                            className="text-xs"
-                                        />
-                                        <p className="text-[10px] text-white/40">Text longer than this will be summarized.</p>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-
-
-                    {/* AUDIO TAB (INPUT) */}
-                    {activeTab === 'audio' && (
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <Label>Enable Voice Input</Label>
-                                <label className="flex items-center gap-2 cursor-pointer group">
-                                    <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${localSettings.voiceInputEnabled ? 'bg-red-500/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
-                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${localSettings.voiceInputEnabled ? 'left-4.5' : 'left-0.5'}`} />
-                                    </div>
-                                    <input
-                                        type="checkbox"
-                                        checked={localSettings.voiceInputEnabled || false}
-                                        onChange={(e) => handleChange('voiceInputEnabled', e.target.checked)}
-                                        className="hidden"
-                                    />
-                                </label>
+                                        {/* Mic Test */}
+                                        <div className="p-3 bg-black/40 rounded border border-white/10 space-y-2">
+                                            <div className="flex justify-between items-center">
+                                                <Label>Microphone Test</Label>
+                                                <button
+                                                    onClick={isTestingMic ? stopMicTest : testMicrophone}
+                                                    className={`text-[10px] px-2 py-1 rounded border transition-colors ${isTestingMic
+                                                        ? 'bg-red-500/20 border-red-500 text-red-200'
+                                                        : 'bg-white/5 border-white/10 hover:bg-white/10'}`}
+                                                >
+                                                    {isTestingMic ? 'STOP TEST' : 'START TEST'}
+                                                </button>
+                                            </div>
+                                            {isTestingMic && (
+                                                <div className="h-1 bg-white/10 rounded overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-green-500 transition-all duration-75 ease-out"
+                                                        style={{ width: `${Math.min(100, micLevel * 100)}%` }}
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
                             </div>
 
-                            <div className="space-y-4 border-t border-white/5 pt-4">
-                                <div className="p-3 bg-white/5 rounded border border-white/5">
-                                    <Label>Wake Word Engine</Label>
-                                    <div className="flex items-center justify-between mt-1">
-                                        <div className="text-sm font-mono text-green-400">Vosk (Offline)</div>
-                                        <div className="text-[10px] text-white/40">Always Active if Voice Enabled</div>
-                                    </div>
-                                    {/* Wake Word Input */}
-                                    <div className="mt-2 space-y-1">
-                                        <Label>Trigger Phrase</Label>
-                                        <Input
-                                            value={localSettings.wakeWord || 'Computer'}
-                                            onChange={(e: any) => handleChange('wakeWord', e.target.value)}
-                                            placeholder="e.g. Computer, Jarvis..."
-                                            className="text-xs"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label>Command Transcription Model</Label>
-                                    <select
-                                        value={localSettings.transcriptionProvider || 'native'}
-                                        onChange={(e) => handleChange('transcriptionProvider', e.target.value)}
-                                        className="w-full bg-black/20 border border-white/10 rounded p-1.5 text-white text-xs font-mono focus:border-blue-500/50 outline-none"
-                                    >
-                                        <option value="groq" className="bg-neutral-900">Groq (Whisper / Recommended)</option>
-                                        <option value="openai" className="bg-neutral-900">OpenAI Whisper (High Accuracy)</option>
-                                        <option value="local" className="bg-neutral-900">Local Whisper</option>
-                                        <option value="vosk" className="bg-neutral-900">Vosk (Offline Fallback)</option>
-                                    </select>
-                                    <p className="text-[10px] text-white/40">
-                                        Select the AI model used to transcribe your voice commands.
-                                    </p>
-
-                                    {localSettings.transcriptionProvider === 'groq' && (
-                                        <div className="mt-2 space-y-1 bg-white/5 p-2 rounded">
-                                            <Label>Groq API Key (Saved)</Label>
-                                            <Input
-                                                type="password"
-                                                value={localSettings.groqApiKey || ''}
-                                                onChange={(e: any) => handleChange('groqApiKey', e.target.value)}
-                                                placeholder="gsk_..."
-                                            />
+                            {/* SECTION: TTS */}
+                            <div className="space-y-4 pt-4 border-t border-white/10">
+                                <h3 className="text-sm font-bold text-white/70 uppercase tracking-wider border-b border-white/10 pb-2 flex items-center gap-2">
+                                    <Volume2 size={14} /> Text-to-Speech
+                                </h3>
+                                <div className="flex items-center justify-between">
+                                    <Label>Enable TTS</Label>
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${localSettings.ttsEnabled ? 'bg-green-500/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
+                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${localSettings.ttsEnabled ? 'left-4.5' : 'left-0.5'}`} />
                                         </div>
-                                    )}
+                                        <input type="checkbox" checked={localSettings.ttsEnabled || false} onChange={(e) => handleChange('ttsEnabled', e.target.checked)} className="hidden" />
+                                    </label>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <Label>Microphone</Label>
-                                    <select
-                                        value={localSettings.inputDeviceId || 'default'}
-                                        onChange={(e) => handleChange('inputDeviceId', e.target.value)}
-                                        className="w-full bg-black/20 border border-white/10 rounded p-1.5 text-white text-xs font-mono focus:border-blue-500/50 outline-none"
-                                    >
-                                        <option value="default" className="bg-neutral-900">Default</option>
-                                        {audioDevices.map(device => (
-                                            <option key={device.deviceId} value={device.deviceId} className="bg-neutral-900">
-                                                {device.label || `Microphone ${device.deviceId.slice(0, 5)}...`}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-
-
-                                <div className="space-y-2">
-                                    <Label>Silence Timeout (Seconds): {localSettings.wakeWordTimeout || 2}s</Label>
-                                    <input
-                                        type="range"
-                                        min="1"
-                                        max="10"
-                                        step="0.5"
-                                        value={localSettings.wakeWordTimeout || 2}
-                                        onChange={(e) => handleChange('wakeWordTimeout', parseFloat(e.target.value))}
-                                        className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                    />
-                                    <p className="text-[10px] text-white/40">Recording stops after this much silence.</p>
-                                </div>
-
-                                {/* Test Utilities */}
-                                <div className="pt-2 border-t border-white/5 space-y-3">
-                                    <Label>Audio Test</Label>
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={testMicrophone}
-                                            className={`flex-1 p-2 rounded text-xs font-bold uppercase tracking-wider transition-colors ${isTestingMic ? 'bg-red-500/20 text-red-200' : 'bg-white/5 hover:bg-white/10 text-white/70 hover:text-white'}`}
-                                        >
-                                            {isTestingMic ? 'Stop Mic Test' : 'Test Microphone'}
-                                        </button>
-                                        <button
-                                            onClick={testSpeaker}
-                                            className="flex-1 p-2 bg-white/5 hover:bg-white/10 rounded text-xs font-bold uppercase tracking-wider text-white/70 hover:text-white transition-colors"
-                                        >
-                                            Test Speaker
-                                        </button>
-                                    </div>
-                                    {isTestingMic && (
-                                        <div className="h-1 bg-white/10 rounded overflow-hidden">
-                                            <div
-                                                className="h-full bg-green-500 transition-all duration-75 ease-out"
-                                                style={{ width: `${micLevel}%` }}
-                                            />
+                                {localSettings.ttsEnabled && (
+                                    <div className="space-y-4 border-t border-white/5 pt-4">
+                                        <div className="space-y-2">
+                                            <Label>TTS Provider</Label>
+                                            <div className="flex gap-2">
+                                                <ProviderButton id="browser" label="Browser" color="bg-blue-500" current={localSettings.ttsProvider || 'browser'} onClick={(val) => handleChange('ttsProvider', val)} />
+                                                <ProviderButton id="voicevox" label="VoiceVox" color="bg-green-500" current={localSettings.ttsProvider} onClick={(val) => { handleChange('ttsProvider', val); fetchVoicevoxSpeakers(); }} />
+                                            </div>
                                         </div>
-                                    )}
-                                </div>
+
+                                        {localSettings.ttsProvider === 'voicevox' && (
+                                            <div className="p-3 bg-green-900/20 border border-green-500/30 rounded space-y-3">
+                                                <div className="flex justify-between items-center">
+                                                    <div className="text-xs text-green-200">VoiceVox Settings (Localhost:50021)</div>
+                                                    <button onClick={() => testSpeaker(localSettings.ttsVoice)} className="text-[10px] px-2 py-1 bg-green-500/20 hover:bg-green-500/30 text-green-200 rounded border border-green-500/30">Test Voice</button>
+                                                </div>
+                                                {voicevoxError && <div className="text-xs text-red-400 bg-red-900/20 p-2 rounded">{voicevoxError}</div>}
+                                                <div className="space-y-1">
+                                                    <Label>Speaker</Label>
+                                                    {voicevoxSpeakers.length > 0 ? (
+                                                        <select value={localSettings.ttsVoice || ''} onChange={(e) => handleChange('ttsVoice', e.target.value)} className="w-full bg-black/20 border border-white/10 rounded p-1.5 text-white text-xs font-mono outline-none">
+                                                            <option value="">Select a Speaker</option>
+                                                            {voicevoxSpeakers.map(s => (
+                                                                <optgroup key={s.name} label={s.name}>
+                                                                    {s.styles.map(st => <option key={st.id} value={st.id}>{s.name} ({st.name})</option>)}
+                                                                </optgroup>
+                                                            ))}
+                                                        </select>
+                                                    ) : (
+                                                        <Input type="number" value={localSettings.ttsVoice || '1'} onChange={(e: any) => handleChange('ttsVoice', e.target.value)} placeholder="Speaker ID" />
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="space-y-2">
+                                            <Label>Summary Prompt (Long Text)</Label>
+                                            <textarea value={localSettings.ttsSummaryPrompt || ''} onChange={(e) => handleChange('ttsSummaryPrompt', e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white h-16 focus:outline-none resize-none" placeholder="Summarize for speech..." />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label>Summary Threshold (Chars)</Label>
+                                            <Input type="number" value={localSettings.ttsSummaryThreshold ?? 400} onChange={(e: any) => handleChange('ttsSummaryThreshold', parseInt(e.target.value))} className="text-xs" />
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}

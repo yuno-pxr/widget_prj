@@ -55,10 +55,83 @@ function startClipboardWatcher(win) {
 }
 
 let mainWindow = null;
+let avatarWindow = null;
 let isQuitting = false;
 
-// Disable GPU Acceleration for compatibility
+// Disable GPU Acceleration for compatibility (keep existing)
 app.disableHardwareAcceleration();
+
+// --- Avatar Window ---
+function createAvatarWindow() {
+    console.log('Creating avatar window...');
+    const preloadPath = path.join(__dirname, 'preload.cjs');
+
+    avatarWindow = new BrowserWindow({
+        width: 100,
+        height: 100,
+        minWidth: 1,
+        minHeight: 1,
+        useContentSize: true,
+        transparent: true,
+        frame: false,
+        hasShadow: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: true, // Allow resizing via code if needed, but mainly controlled by content
+        webPreferences: {
+            preload: preloadPath,
+            nodeIntegration: false,
+            contextIsolation: true,
+            backgroundThrottling: false
+        }
+    });
+
+    // Load same app but with identifying query param
+    const isDev = !app.isPackaged;
+    const searchParam = '?mode=avatar';
+
+    if (isDev) {
+        avatarWindow.loadURL(`http://localhost:5173${searchParam}`);
+        // avatarWindow.webContents.openDevTools({ mode: 'detach' }); 
+    } else {
+        avatarWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: 'mode=avatar' });
+    }
+
+    avatarWindow.setIgnoreMouseEvents(false); // Make it interactable by default
+
+    avatarWindow.on('closed', () => {
+        avatarWindow = null;
+    });
+}
+
+// IPC: Receive update from Main Window, forward to Avatar Window
+let cachedAvatarState = null;
+
+ipcMain.on('update-avatar-state', (event, state) => {
+    cachedAvatarState = state; // Cache for new windows
+    if (avatarWindow && !avatarWindow.isDestroyed()) {
+        avatarWindow.webContents.send('avatar-state-updated', state);
+    }
+});
+
+ipcMain.handle('get-avatar-state', () => cachedAvatarState);
+
+ipcMain.on('resize-avatar-window', (event, { width, height }) => {
+    if (avatarWindow && !avatarWindow.isDestroyed()) {
+        try {
+            avatarWindow.setMinimumSize(1, 1); // Ensure constraint allows shrinking
+            avatarWindow.setContentSize(Math.ceil(width), Math.ceil(height));
+        } catch (e) {
+            console.error('Resize failed:', e);
+        }
+    }
+});
+
+// IPC: Allow Avatar Window to control its own ignoreMouseEvents if needed
+ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.setIgnoreMouseEvents(ignore, options);
+});
 
 function createTray() {
     const iconPath = path.join(__dirname, 'icon.png');
@@ -303,15 +376,97 @@ ipcMain.on('log', (event, message) => {
     console.log('[Renderer]:', message);
 });
 
+// --- Avatar Handling ---
+const AdmZip = require('adm-zip');
+const fs = require('fs');
+
+const AVATAR_CACHE_DIR = path.join(app.getPath('userData'), 'avatar_cache');
+
+ipcMain.handle('select-file', async (event, options) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile'],
+        ...options
+    });
+    if (result.canceled) return null;
+    return result.filePaths[0];
+});
+
+ipcMain.handle('load-avatar', async (event, filePath) => {
+    try {
+        console.log('Loading avatar from:', filePath);
+
+        // Ensure cache dir exists
+        if (!fs.existsSync(AVATAR_CACHE_DIR)) {
+            fs.mkdirSync(AVATAR_CACHE_DIR, { recursive: true });
+        }
+
+        // Clean cache dir? For now, let's just overwrite 'current' folder or similar.
+        // To support switching avatars, maybe specific folder?
+        // Let's us a fixed 'current' folder for simplicity in this version.
+        const currentAvatarDir = path.join(AVATAR_CACHE_DIR, 'current');
+
+        // Remove existing current dir if possible to clean up
+        try {
+            if (fs.existsSync(currentAvatarDir)) {
+                fs.rmSync(currentAvatarDir, { recursive: true, force: true });
+            }
+        } catch (e) {
+            console.warn('Failed to clean avatar cache:', e);
+        }
+
+        fs.mkdirSync(currentAvatarDir, { recursive: true });
+
+        const zip = new AdmZip(filePath);
+        zip.extractAllTo(currentAvatarDir, true);
+
+        // Read model.json
+        const modelPath = path.join(currentAvatarDir, 'model.json');
+        if (!fs.existsSync(modelPath)) {
+            throw new Error('Invalid Avatar: model.json not found');
+        }
+
+        const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
+
+        // Return model data with fixed paths for the renderer to use via protocol
+        // We will serve from avatar://current/
+        return modelData;
+    } catch (e) {
+        console.error('Failed to load avatar:', e);
+        throw e;
+    }
+});
+
+const { protocol } = require('electron');
+
 app.whenReady().then(() => {
     console.log('App Ready');
+
+    // Register avatar protocol
+    protocol.registerFileProtocol('avatar', (request, callback) => {
+        const url = request.url.replace('avatar://', '');
+        // We expect avatar://current/assets/...
+        // Map to AVATAR_CACHE_DIR
+        try {
+            // Decode URL to handle spaces etc
+            const decodedPath = decodeURIComponent(url);
+            const fullPath = path.join(AVATAR_CACHE_DIR, decodedPath);
+            callback({ path: fullPath });
+        } catch (error) {
+            console.error('Avatar protocol error:', error);
+            callback({ error: -2 }); // FILE_NOT_FOUND
+        }
+    });
+
     createTray();
     createWindow();
+    createAvatarWindow(); // Create avatar window
     registerGlobalShortcut();
+
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
             createWindow();
+            createAvatarWindow(); // Re-create if needed
         }
     });
 

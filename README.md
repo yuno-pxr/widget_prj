@@ -87,53 +87,79 @@ Pull requests are welcome, but not required.
 
 ### Source Code / ソースコード
 
-The **source code** of this project is licensed under the  
+The source code of this project is licensed under the  
 **Apache License, Version 2.0**.
 
-However, **commercial use of the source code (including modified versions) is NOT permitted without prior permission**.
+Commercial use is **legally permitted** under the Apache License 2.0.  
+However, **commercial use is strongly discouraged without prior consultation**.
 
-This restriction exists because:
-- Code quality and behavior cannot be guaranteed in third-party deployments
-- The author cannot provide commercial-level support or warranty
+This is because:
+- The code is under active development
+- Code quality, behavior, and long-term stability are **not guaranteed**
+- The author does **not** provide commercial-level support, maintenance, or warranty
 
-If you wish to use the source code for commercial purposes,  
+If you intend to use this project in a commercial product or service  
+and require reliability, guarantees, or long-term support,  
 please contact us in advance via the inquiry form.
 
 ---
 
-本プロジェクトの **ソースコード**は  
+本プロジェクトのソースコードは  
 **Apache License 2.0** のもとで公開されています。
 
-ただし、**改変の有無を問わず、商用利用は禁止**されています（要事前許諾）。
+Apache License 2.0 に基づき、**商用利用は法的には可能**です。  
+ただし、**事前の相談なしでの商用利用は強く非推奨**とします。
 
-これは、
-- コード品質や動作保証を行えないこと
-- 商用サポート責任を負えないこと
-を理由としています。
+その理由は以下の通りです：
+- 本コードは開発途上であり、仕様変更の可能性があります
+- 動作・品質・長期的な安定性は保証されません
+- 作者は商用利用に対するサポート・保守・保証を提供できません
 
-商用利用を希望される場合は、  
-必ず事前に問い合わせフォームよりご連絡ください。
+商用プロダクトやサービスへの利用を検討されており、  
+信頼性や継続的なサポートが必要な場合は、  
+必ず事前に問い合わせフォームよりご相談ください。
+
 
 ---
 
 ### Release Binaries / リリースバイナリについて
 
-Official release binaries provided by this project are **NOT permitted for commercial use**.
-
-These binaries are provided for:
+Official release binaries provided by this project are intended for:
 - Evaluation
 - Testing
-- Personal use only
+- Personal use
 
-Commercial redistribution or use of release binaries requires explicit permission.
+While redistribution or commercial use may be legally possible under the license,  
+such usage is **strongly discouraged**.
+
+The author does not guarantee:
+- Correct behavior in production environments
+- Security, performance, or stability
+- Compatibility with future versions
+
+For any production or commercial use, please contact us in advance.
+
 
 ---
 
-本プロジェクトが配布する **公式リリースバイナリ**は、  
-**商用利用不可**です。
+本プロジェクトが配布する公式リリースバイナリは、  
+主に以下の用途を想定しています：
 
-評価・検証・個人利用のみを目的としています。  
-商用利用・再配布を希望する場合は、事前にご相談ください。
+- 評価
+- 検証
+- 個人利用
+
+ライセンス上、再配布や商用利用が可能な場合がありますが、  
+**そのような利用は強く非推奨**とします。
+
+作者は以下を保証しません：
+- 本番環境での正確な動作
+- セキュリティ・性能・安定性
+- 将来バージョンとの互換性
+
+商用・本番用途での利用を検討される場合は、  
+必ず事前にご相談ください。
+
 
 ---
 

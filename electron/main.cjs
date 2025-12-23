@@ -94,7 +94,10 @@ function createAvatarWindow() {
         avatarWindow.loadURL(`http://localhost:5173${searchParam}`);
         // avatarWindow.webContents.openDevTools({ mode: 'detach' }); 
     } else {
-        avatarWindow.loadFile(path.join(__dirname, '../dist/index.html'), { search: 'mode=avatar' });
+        const { pathToFileURL } = require('url');
+        const indexPath = path.join(__dirname, '../dist/index.html');
+        const fileUrl = pathToFileURL(indexPath).href;
+        avatarWindow.loadURL(`${fileUrl}?mode=avatar`);
     }
 
     avatarWindow.setIgnoreMouseEvents(false); // Make it interactable by default
@@ -524,8 +527,54 @@ ipcMain.handle('load-installed-avatar', async (event, avatarId) => {
 
 const { protocol } = require('electron');
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     console.log('App Ready');
+
+    // --- Install Default Avatar if needed ---
+    const defaultAvatarZip = path.join(__dirname, 'assets/default_avatar.zip');
+
+    // Check if we have any avatars
+    let hasAvatars = false;
+    if (fs.existsSync(AVATAR_CACHE_DIR)) {
+        const entries = fs.readdirSync(AVATAR_CACHE_DIR, { withFileTypes: true });
+        hasAvatars = entries.some(e => e.isDirectory());
+    }
+
+    if (!hasAvatars && fs.existsSync(defaultAvatarZip)) {
+        console.log('Installing default avatar...');
+        try {
+            // Create cache dir if missing
+            if (!fs.existsSync(AVATAR_CACHE_DIR)) {
+                fs.mkdirSync(AVATAR_CACHE_DIR, { recursive: true });
+            }
+
+            const zip = new AdmZip(defaultAvatarZip);
+            // We assume the zip contains the avatar files directly or in a folder. 
+            // We'll extract to a specific ID folder 'default'.
+            // However, typical avatar zips here might be:
+            // zip root -> files (model.json etc)
+            // or zip root -> folder -> files
+
+            // Let's inspect first entry
+            const zipEntries = zip.getEntries();
+            if (zipEntries.length > 0) {
+                const avatarId = 'default-avatar';
+                const targetDir = path.join(AVATAR_CACHE_DIR, avatarId);
+
+                fs.mkdirSync(targetDir, { recursive: true });
+                zip.extractAllTo(targetDir, true);
+                console.log('Default avatar installed to:', targetDir);
+
+                // Update settings to use this new default
+                const settings = dataManager.getSettings();
+                settings.currentAvatarId = avatarId;
+                settings.avatarPath = ''; // Clear legacy path
+                dataManager.saveSettings(settings);
+            }
+        } catch (e) {
+            console.error('Failed to install default avatar:', e);
+        }
+    }
 
     // Register avatar protocol
     protocol.registerFileProtocol('avatar', (request, callback) => {

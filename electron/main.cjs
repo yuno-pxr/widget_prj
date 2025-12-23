@@ -136,6 +136,18 @@ ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
     if (win) win.setIgnoreMouseEvents(ignore, options);
 });
 
+// IPC: Sync Scale from Avatar Window back to Main Window
+ipcMain.on('sync-avatar-scale', (event, scale) => {
+    // Only forward to Main Window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('avatar-scale-sync', scale);
+    }
+    // Also update cache so new windows get correct scale
+    if (cachedAvatarState) {
+        cachedAvatarState.scale = scale;
+    }
+});
+
 function createTray() {
     const iconPath = path.join(__dirname, 'icon.png');
     const icon = nativeImage.createFromPath(iconPath);
@@ -403,38 +415,109 @@ ipcMain.handle('load-avatar', async (event, filePath) => {
             fs.mkdirSync(AVATAR_CACHE_DIR, { recursive: true });
         }
 
-        // Clean cache dir? For now, let's just overwrite 'current' folder or similar.
-        // To support switching avatars, maybe specific folder?
-        // Let's us a fixed 'current' folder for simplicity in this version.
-        const currentAvatarDir = path.join(AVATAR_CACHE_DIR, 'current');
+        // Use filename (without extension) as ID
+        const filename = path.basename(filePath, path.extname(filePath));
+        // Simple slugify: lowercase, replace spaces with hyphens, remove non-alphanumeric
+        const avatarId = filename.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
-        // Remove existing current dir if possible to clean up
+        const avatarDir = path.join(AVATAR_CACHE_DIR, avatarId);
+
+        // If exists, remove first (to allow update)
         try {
-            if (fs.existsSync(currentAvatarDir)) {
-                fs.rmSync(currentAvatarDir, { recursive: true, force: true });
+            if (fs.existsSync(avatarDir)) {
+                fs.rmSync(avatarDir, { recursive: true, force: true });
             }
         } catch (e) {
-            console.warn('Failed to clean avatar cache:', e);
+            console.warn('Failed to clean existing avatar dir:', e);
         }
 
-        fs.mkdirSync(currentAvatarDir, { recursive: true });
+        fs.mkdirSync(avatarDir, { recursive: true });
 
         const zip = new AdmZip(filePath);
-        zip.extractAllTo(currentAvatarDir, true);
+        zip.extractAllTo(avatarDir, true);
 
         // Read model.json
-        const modelPath = path.join(currentAvatarDir, 'model.json');
+        const modelPath = path.join(avatarDir, 'model.json');
         if (!fs.existsSync(modelPath)) {
             throw new Error('Invalid Avatar: model.json not found');
         }
 
         const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
 
-        // Return model data with fixed paths for the renderer to use via protocol
-        // We will serve from avatar://current/
-        return modelData;
+        // Return avatarId and model data
+        return { avatarId, modelData };
     } catch (e) {
         console.error('Failed to load avatar:', e);
+        throw e;
+    }
+});
+
+ipcMain.handle('get-installed-avatars', async () => {
+    try {
+        if (!fs.existsSync(AVATAR_CACHE_DIR)) return [];
+
+        const entries = fs.readdirSync(AVATAR_CACHE_DIR, { withFileTypes: true });
+        const avatars = [];
+
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                const modelPath = path.join(AVATAR_CACHE_DIR, entry.name, 'model.json');
+                if (fs.existsSync(modelPath)) {
+                    try {
+                        const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
+                        avatars.push({
+                            id: entry.name,
+                            name: modelData.name || entry.name,
+                            path: modelPath // Not strictly needed for renderer but helpful for debug
+                        });
+                    } catch (e) {
+                        // Ignore invalid JSON
+                    }
+                }
+            }
+        }
+        return avatars;
+    } catch (e) {
+        console.error('Failed to get installed avatars:', e);
+        return [];
+    }
+});
+
+ipcMain.handle('delete-avatar', async (event, avatarId) => {
+    try {
+        if (!avatarId) throw new Error('No avatar ID provided');
+
+        // Prevent directory traversal (basic check)
+        const safeId = path.basename(avatarId);
+        const avatarDir = path.join(AVATAR_CACHE_DIR, safeId);
+
+        if (fs.existsSync(avatarDir)) {
+            fs.rmSync(avatarDir, { recursive: true, force: true });
+            return true;
+        }
+        return false;
+    } catch (e) {
+        console.error('Failed to delete avatar:', e);
+        throw e;
+    }
+});
+
+ipcMain.handle('load-installed-avatar', async (event, avatarId) => {
+    try {
+        if (!avatarId) throw new Error('No avatar ID provided');
+
+        const safeId = path.basename(avatarId);
+        const avatarDir = path.join(AVATAR_CACHE_DIR, safeId);
+        const modelPath = path.join(avatarDir, 'model.json');
+
+        if (!fs.existsSync(modelPath)) {
+            throw new Error(`Avatar not found: ${avatarId}`);
+        }
+
+        const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
+        return { avatarId: safeId, modelData };
+    } catch (e) {
+        console.error('Failed to load installed avatar:', e);
         throw e;
     }
 });
@@ -447,12 +530,18 @@ app.whenReady().then(() => {
     // Register avatar protocol
     protocol.registerFileProtocol('avatar', (request, callback) => {
         const url = request.url.replace('avatar://', '');
-        // We expect avatar://current/assets/...
-        // Map to AVATAR_CACHE_DIR
+        // New URL Structure: avatar://<avatarId>/path/to/asset.png
+
         try {
-            // Decode URL to handle spaces etc
             const decodedPath = decodeURIComponent(url);
+            // Verify path is safe if needed, but for now map directly
             const fullPath = path.join(AVATAR_CACHE_DIR, decodedPath);
+
+            console.log(`[Avatar Protocol] Request: ${url}`);
+            console.log(`[Avatar Protocol] Decoded: ${decodedPath}`);
+            console.log(`[Avatar Protocol] Full Path: ${fullPath}`);
+            console.log(`[Avatar Protocol] Exists? ${fs.existsSync(fullPath)}`);
+
             callback({ path: fullPath });
         } catch (error) {
             console.error('Avatar protocol error:', error);

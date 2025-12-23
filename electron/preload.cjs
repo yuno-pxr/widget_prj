@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loadSkin: (skinId) => ipcRenderer.invoke('load-skin', skinId),
     selectFile: (options) => ipcRenderer.invoke('select-file', options),
     loadAvatar: (filePath) => ipcRenderer.invoke('load-avatar', filePath),
+    loadInstalledAvatar: (avatarId) => ipcRenderer.invoke('load-installed-avatar', avatarId),
+    getInstalledAvatars: () => ipcRenderer.invoke('get-installed-avatars'),
+    deleteAvatar: (avatarId) => ipcRenderer.invoke('delete-avatar', avatarId),
     updateAvatarState: (state) => ipcRenderer.send('update-avatar-state', state),
     onAvatarStateUpdate: (callback) => {
         const subscription = (_event, state) => callback(state);
@@ -44,4 +47,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAvatarState: () => ipcRenderer.invoke('get-avatar-state'),
     resizeAvatarWindow: (width, height) => ipcRenderer.send('resize-avatar-window', { width, height }),
     setIgnoreMouseEvents: (ignore, options) => ipcRenderer.send('set-ignore-mouse-events', ignore, options),
+    syncAvatarScale: (scale) => ipcRenderer.send('sync-avatar-scale', scale),
+    onAvatarScaleSync: (callback) => {
+        const subscription = (_event, scale) => callback(scale);
+        ipcRenderer.on('avatar-scale-sync', subscription);
+        return () => ipcRenderer.removeListener('avatar-scale-sync', subscription);
+    },
 });

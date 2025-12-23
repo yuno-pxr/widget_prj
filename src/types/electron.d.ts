@@ -26,6 +26,11 @@ export interface ElectronAPI {
     getAvatarState: () => Promise<any>;
     resizeAvatarWindow: (width: number, height: number) => void;
     setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
+    getInstalledAvatars: () => Promise<{ id: string, name: string, path: string }[]>;
+    loadInstalledAvatar: (avatarId: string) => Promise<{ avatarId: string, modelData: any }>;
+    deleteAvatar: (avatarId: string) => Promise<boolean>;
+    syncAvatarScale: (scale: number) => void;
+    onAvatarScaleSync: (callback: (scale: number) => void) => () => void;
 }
 
 declare global {

@@ -30,17 +30,14 @@ const StartupToggle = () => {
 };
 
 interface SettingsModalProps {
-    onClose: () => void;
-    // Props for syncing state with App.tsx (or we could move state here completely if App doesn't need it instantly, but App needs keys for AI)
-    // For now, let's accept initial values and onSave/Update.
-    // Actually, App.tsx has the state. Let's pass the setters or use a context.
-    // Given the complexity, let's pass a "settings" object and an "onUpdate" callback.
     settings: any;
-    onUpdate: (newSettings: any) => void;
+    onClose: () => void;
+    onSettingsChange: (key: string, value: any) => void;
+    onSelectAvatar?: (avatarId: string) => void;
     appVersion: string;
 }
 
-export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: SettingsModalProps) => {
+export const SettingsModal = ({ onClose, settings, onSettingsChange, onSelectAvatar, appVersion }: SettingsModalProps) => {
     const [activeTab, setActiveTab] = useState<'general' | 'ai' | 'skin' | 'sound' | 'avatar'>('ai');
     const { availableSkins, loadSkin } = useSkin();
 
@@ -58,6 +55,7 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
     // VoiceVox Speaker State
     const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<{ name: string, styles: { name: string, id: number }[] }[]>([]);
     const [voicevoxError, setVoicevoxError] = useState('');
+    const [installedAvatars, setInstalledAvatars] = useState<{ id: string, name: string, path: string }[]>([]);
 
     const fetchVoicevoxSpeakers = async () => {
         setVoicevoxError('');
@@ -87,16 +85,30 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                 setAudioDevices(inputs);
             }).catch(err => console.error("Error fetching audio devices:", err));
         }
-    }, [activeTab]);
+        if (activeTab === 'avatar') {
+            fetchInstalledAvatars();
+        }
+    }, [activeTab, settings.currentAvatarId, settings.avatarPath]);
+
+    const fetchInstalledAvatars = async () => {
+        if (window.electronAPI && window.electronAPI.getInstalledAvatars) {
+            const avatars = await window.electronAPI.getInstalledAvatars();
+            setInstalledAvatars(avatars);
+        }
+    };
     // Local state for form fields to avoid excessive re-renders in App
     const [localSettings, setLocalSettings] = useState(settings);
     const [rawSleepTimeout, setRawSleepTimeout] = useState('');
 
     // Sync sleep timeout when settings change (prop update) or on mount
     useEffect(() => {
-        const val = settings.sleepTimeout !== undefined ? (settings.sleepTimeout / 60000).toString() : '0.5';
-        setRawSleepTimeout(val);
-    }, [settings.sleepTimeout]);
+        const val = settings.sleepTimeout !== undefined ? (settings.sleepTimeout / 60000) : 0.5;
+        const currentVal = parseFloat(rawSleepTimeout);
+        // Only update if the value is meaningfully different (prevents overwriting "0." with "0" while typing)
+        if (isNaN(currentVal) || Math.abs(val - currentVal) > 0.001) {
+            setRawSleepTimeout(val.toString());
+        }
+    }, [settings.sleepTimeout, rawSleepTimeout]);
 
     const supportedLanguages = [
         'Japanese', 'English', 'Chinese', 'Korean', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Russian'
@@ -207,9 +219,11 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
     };
 
     const handleChange = (key: string, value: any) => {
-        const newSettings = { ...localSettings, [key]: value };
-        setLocalSettings(newSettings);
-        onUpdate(newSettings); // Sync with App immediately or on save? App uses it for context. Sticky settings usually implies immediate effect or "Apply".
+        // Update local state first for responsiveness if needed, but handled by parent mostly.
+        // Actually, we update localSettings for immediate UI feedback.
+        setLocalSettings((prev: any) => ({ ...prev, [key]: value }));
+        onSettingsChange(key, value);
+        // Sync with App immediately or on save? App uses it for context. Sticky settings usually implies immediate effect or "Apply".
         // App.tsx saves to file on change of specific dependencies.
         // Doing it immediately is fine for this app scale.
     };
@@ -253,7 +267,7 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                     <TabButton id="ai" label="AI Models" icon={<Cpu size={14} />} active={activeTab} onClick={setActiveTab} />
                     <TabButton id="sound" label="Sound" icon={<Volume2 size={14} />} active={activeTab} onClick={setActiveTab} />
                     <TabButton id="avatar" label="Avatar" icon={<Monitor size={14} />} active={activeTab} onClick={setActiveTab} />
-                    <TabButton id="skin" label="Appearance" icon={<Layers size={14} />} active={activeTab} onClick={setActiveTab} />
+                    <TabButton id="skin" label="Skin" icon={<Layers size={14} />} active={activeTab} onClick={setActiveTab} />
                     <div className="border-t border-white/5 my-2" />
                     <TabButton id="general" label="System" icon={<Monitor size={14} />} active={activeTab} onClick={setActiveTab} />
                 </div>
@@ -291,6 +305,20 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                                     </label>
                                 </div>
 
+                                {/* Auto Blink */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <Label>Auto Blink</Label>
+                                        <label className="flex items-center gap-2 cursor-pointer group">
+                                            <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${localSettings.autoBlink !== false ? 'bg-blue-500/50' : 'bg-white/10 group-hover:bg-white/20'}`}>
+                                                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${localSettings.autoBlink !== false ? 'left-4.5' : 'left-0.5'}`} />
+                                            </div>
+                                            <input type="checkbox" checked={localSettings.autoBlink !== false} onChange={(e) => handleChange('autoBlink', e.target.checked)} className="hidden" />
+                                        </label>
+                                    </div>
+                                    <div className="text-[10px] text-white/40">Enable automatic blinking behavior.</div>
+                                </div>
+
                                 {/* Sleep Timeout */}
                                 {/* Sleep Timeout */}
                                 <div className="space-y-2">
@@ -315,6 +343,49 @@ export const SettingsModal = ({ onClose, settings, onUpdate, appVersion }: Setti
                                         </div>
                                     </div>
                                     <div className="text-[10px] text-white/40">Set to 0 to disable sleep.</div>
+                                </div>
+
+                                {/* Installed Avatars List */}
+                                <div className="space-y-2 pt-4 border-t border-white/10">
+                                    <Label>Installed Avatars</Label>
+                                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar bg-black/20 p-2 rounded">
+                                        {installedAvatars.length === 0 ? (
+                                            <div className="text-xs text-white/30 text-center py-2">No avatars installed</div>
+                                        ) : (
+                                            installedAvatars.map(avatar => (
+                                                <div
+                                                    key={avatar.id}
+                                                    className={`flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${localSettings.currentAvatarId === avatar.id ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-white/5 hover:bg-white/10'}`}
+                                                    onClick={() => onSelectAvatar && onSelectAvatar(avatar.id)}
+                                                >
+                                                    <span className="text-xs text-white/80 select-none">{avatar.name}</span>
+                                                    <div className="flex gap-2">
+                                                        {localSettings.currentAvatarId === avatar.id && (
+                                                            <span className="text-[10px] text-green-400 bg-green-400/10 px-1 rounded">Active</span>
+                                                        )}
+                                                        <button
+                                                            onClick={async (e) => {
+                                                                e.stopPropagation(); // Prevent selection when deleting
+                                                                // Use local component state or handler defined above
+                                                                if (confirm('Are you sure you want to delete this avatar?')) {
+                                                                    if (window.electronAPI && window.electronAPI.deleteAvatar) {
+                                                                        const success = await window.electronAPI.deleteAvatar(avatar.id);
+                                                                        if (success) {
+                                                                            fetchInstalledAvatars();
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className="text-white/40 hover:text-red-400"
+                                                            title="Delete"
+                                                        >
+                                                            <X size={12} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
 
                                 <div className="block pt-4 border-t border-white/5 space-y-4">

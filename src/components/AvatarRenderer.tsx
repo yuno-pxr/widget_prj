@@ -45,9 +45,16 @@ export const AvatarRenderer = ({
     onActivity,
     isThinking,
     isSleeping,
-    developerMode,
-    debugPattern
-}: AvatarRendererProps & { developerMode?: boolean; debugPattern?: string | null; onActivity?: () => void }) => {
+    debugPattern,
+    autoBlink = true,
+    avatarId
+}: AvatarRendererProps & {
+    developerMode?: boolean;
+    debugPattern?: string | null;
+    onActivity?: () => void;
+    autoBlink?: boolean;
+    avatarId?: string;
+}) => {
 
     // State
     const [blinkState, setBlinkState] = useState<'open' | 'closed'>('open');
@@ -64,13 +71,13 @@ export const AvatarRenderer = ({
 
     // Blink Logic (standard)
     useEffect(() => {
-        if (!visible || !avatarData || isThinking || isSleeping) return;
+        if (!visible || !avatarData || isThinking || isSleeping || !autoBlink) return;
 
         let timeoutId: NodeJS.Timeout;
         const blinkLoop = () => {
-            // 30fps frames: 48 - 95 frames
-            const minMs = 48 * 33.33; // ~1600ms
-            const maxMs = 95 * 33.33; // ~3166ms
+            // 30fps frames: ~3 seconds (90 frames)
+            const minMs = 80 * 33.33; // ~2666ms
+            const maxMs = 120 * 33.33; // ~4000ms
             const nextBlink = Math.random() * (maxMs - minMs) + minMs;
 
             timeoutId = setTimeout(() => {
@@ -101,7 +108,7 @@ export const AvatarRenderer = ({
         };
         blinkLoop();
         return () => clearTimeout(timeoutId);
-    }, [visible, avatarData, isThinking, isSleeping]);
+    }, [visible, avatarData, isThinking, isSleeping, autoBlink]);
 
     // Speech Modulation & Random Expressions
     useEffect(() => {
@@ -209,17 +216,25 @@ export const AvatarRenderer = ({
     if (!mapping) return null;
 
     // Helper
-    const getPath = (key: keyof AvatarLayerMap) => {
-        if (!mapping) return '';
-        const relPath = mapping[key];
-        if (!relPath) return undefined;
-        return `avatar://current/${relPath}`;
+    // Helper
+    const getPath = (key: string) => {
+        if (!mapping) return null;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const assetPath = (mapping as any)[key];
+        if (!assetPath) return null;
+
+        // Use ID if available, otherwise fallback to 'current' logic
+        const id = avatarId || 'current';
+        return `avatar://${id}/${assetPath}`;
     };
 
     // Fallback: If 'base' is missing, use the first available value in the mapping
     let imageUrl = getPath('base');
     if (!imageUrl && mapping) {
         // Find first valid string value
+        // This part needs to be updated to reflect the new `getPath` signature and `avatarData.mapping` structure
+        // For now, it's left as is, assuming `mapping` might still contain direct paths for fallback,
+        // or that `getPath` will be called with appropriate pattern keys and frame indices.
         for (const key of ['mouthClosed', 'mouthOpen', 'eyesClosed', 'mouthOpenEyesClosed'] as const) {
             const p = getPath(key);
             if (p) {
@@ -266,7 +281,7 @@ export const AvatarRenderer = ({
             style={containerStyle}
             onMouseDown={handleMouseDown}
         >
-            {imageUrl && (
+            {imageUrl ? (
                 <img
                     src={imageUrl}
                     alt="Avatar"
@@ -278,7 +293,7 @@ export const AvatarRenderer = ({
                         }
                     }}
                 />
-            )}
+            ) : null}
         </div>
     );
 };

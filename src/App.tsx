@@ -108,12 +108,22 @@ function App() {
   const [avatarScale, setAvatarScale] = useState(1);
   const [avatarPosition, setAvatarPosition] = useState({ x: 0, y: 0 });
   const [avatarPath, setAvatarPath] = useState('');
+  const [currentAvatarId, setCurrentAvatarId] = useState<string | null>(null);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [isThinking, setIsThinking] = useState(false);
   const [isSleeping, setIsSleeping] = useState(false);
   const [sleepTimeout, setSleepTimeout] = useState(30000); // Default 30s
   const [alwaysOnTop, setAlwaysOnTop] = useState(true); // Default true
+  const [autoBlink, setAutoBlink] = useState(true); // Default true
   const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Wake up avatar when speaking (TTS)
+  useEffect(() => {
+    if (isSpeaking && isSleeping) {
+      setIsSleeping(false);
+      resetIdleTimer();
+    }
+  }, [isSpeaking, isSleeping]);
 
 
   // Update ref when state changes
@@ -124,8 +134,11 @@ function App() {
   const loadAvatar = async (path: string) => {
     try {
       if (window.electronAPI && window.electronAPI.loadAvatar) {
-        const data = await window.electronAPI.loadAvatar(path);
-        setAvatarData(data);
+        const result = await window.electronAPI.loadAvatar(path);
+        if (result) {
+          setAvatarData(result.modelData);
+          setCurrentAvatarId(result.avatarId);
+        }
       }
     } catch (e) {
       console.error("Failed to load avatar:", e);
@@ -246,6 +259,7 @@ function App() {
           if (settings.avatarPosition) setAvatarPosition(settings.avatarPosition);
           if (settings.sleepTimeout !== undefined) setSleepTimeout(settings.sleepTimeout);
           if (settings.alwaysOnTop !== undefined) setAlwaysOnTop(settings.alwaysOnTop);
+          if (settings.autoBlink !== undefined) setAutoBlink(settings.autoBlink);
           if (settings.avatarPath && window.electronAPI.loadAvatar) {
             window.electronAPI.loadAvatar(settings.avatarPath)
               .then(data => setAvatarData(data))
@@ -1440,6 +1454,27 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     }
   };
 
+  const switchInstalledAvatar = async (avatarId: string) => {
+    try {
+      if (window.electronAPI && window.electronAPI.loadInstalledAvatar) {
+        const result = await window.electronAPI.loadInstalledAvatar(avatarId);
+        if (result) {
+          setAvatarData(result.modelData);
+          setCurrentAvatarId(result.avatarId);
+          setAvatarPath(''); // Clear file path as we are using an installed ID
+
+          // Force save settings immediately to persist the switch
+          handleSettingsUpdate({
+            currentAvatarId: result.avatarId,
+            avatarPath: ''
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to switch avatar:", e);
+    }
+  };
+
   const handleSettingsUpdate = (newSettings: any) => {
     if (newSettings.apiKey !== undefined) setApiKey(newSettings.apiKey);
     if (newSettings.geminiApiKey !== undefined) setGeminiApiKey(newSettings.geminiApiKey);
@@ -1476,12 +1511,30 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     if (newSettings.avatarPosition !== undefined) setAvatarPosition(newSettings.avatarPosition);
     if (newSettings.sleepTimeout !== undefined) setSleepTimeout(newSettings.sleepTimeout);
     if (newSettings.alwaysOnTop !== undefined) setAlwaysOnTop(newSettings.alwaysOnTop);
+    if (newSettings.autoBlink !== undefined) setAutoBlink(newSettings.autoBlink);
     if (newSettings.avatarPath !== undefined) {
       setAvatarPath(newSettings.avatarPath);
-      loadAvatar(newSettings.avatarPath);
-      // Initialize auto-scale ref to prevent overwriting saved scale on startup
-      lastAutoScaledPath.current = newSettings.avatarPath;
+      if (newSettings.avatarPath) {
+        loadAvatar(newSettings.avatarPath);
+        // Initialize auto-scale ref to prevent overwriting saved scale on startup
+        lastAutoScaledPath.current = newSettings.avatarPath;
+      }
     }
+    // If no path but we have an ID (and it's not the default empty state), try to load by ID
+    else if (newSettings.currentAvatarId && !newSettings.avatarPath) {
+      if (!avatarData || currentAvatarId !== newSettings.currentAvatarId) {
+        switchInstalledAvatar(newSettings.currentAvatarId);
+      }
+    }
+
+    // Restore ID if saved (though loadAvatar will update it, this helps initial render if needed)
+    if (newSettings.currentAvatarId !== undefined && newSettings.currentAvatarId !== currentAvatarId) {
+      setCurrentAvatarId(newSettings.currentAvatarId);
+    }
+  };
+
+  const handleSettingsChange = (key: string, value: any) => {
+    handleSettingsUpdate({ [key]: value });
   };
 
   // Debug State
@@ -1499,8 +1552,8 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
         ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
         inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider,
         wakeWordTimeout, developerMode, logDirectory,
-        avatarVisible, avatarScale, avatarPosition, avatarPath,
-        sleepTimeout, alwaysOnTop
+        avatarVisible, avatarScale, avatarPosition, avatarPath, currentAvatarId,
+        sleepTimeout, alwaysOnTop, autoBlink
       };
 
       const timeoutId = setTimeout(() => {
@@ -1517,8 +1570,9 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
     inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider,
     wakeWordTimeout, developerMode, logDirectory,
-    avatarVisible, avatarScale, avatarPosition, avatarPath,
-    sleepTimeout, alwaysOnTop
+    wakeWordTimeout, developerMode, logDirectory,
+    avatarVisible, avatarScale, avatarPosition, avatarPath, currentAvatarId,
+    sleepTimeout, alwaysOnTop, autoBlink
   ]);
 
   // Idle Timer Logic
@@ -1558,15 +1612,31 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
       const removeListener = window.electronAPI.onAvatarStateUpdate((state: any) => {
         if (state.path && state.path !== avatarPath) {
           setAvatarPath(state.path);
-          loadAvatar(state.path);
+          if (state.path) loadAvatar(state.path);
         }
         if (state.visible !== undefined) setAvatarVisible(state.visible);
         if (state.scale !== undefined) setAvatarScale(state.scale);
         if (state.isSpeaking !== undefined) setIsSpeaking(state.isSpeaking);
         if (state.isThinking !== undefined) setIsThinking(state.isThinking);
         if (state.developerMode !== undefined) setDeveloperMode(state.developerMode);
+
+        // Sync Sleep Settings
+        if (state.sleepTimeout !== undefined) setSleepTimeout(state.sleepTimeout);
+        if (state.autoBlink !== undefined) setAutoBlink(state.autoBlink);
+        if (state.currentAvatarId !== undefined && state.currentAvatarId !== currentAvatarId) {
+          setCurrentAvatarId(state.currentAvatarId);
+          switchInstalledAvatar(state.currentAvatarId);
+        }
       });
       return removeListener;
+    } else {
+      // Main Window Listener for Avatar Scale Sync
+      if (window.electronAPI.onAvatarScaleSync) {
+        const removeScaleListener = window.electronAPI.onAvatarScaleSync((newScale: number) => {
+          setAvatarScale(newScale);
+        });
+        return removeScaleListener;
+      }
     }
   }, [isAvatarMode]);
 
@@ -1586,10 +1656,14 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
         visible: avatarVisible,
         scale: avatarScale,
         isSpeaking: isSpeaking,
-        isThinking: isThinking
+        isThinking: isThinking,
+        sleepTimeout: sleepTimeout,
+        autoBlink: autoBlink,
+        developerMode: developerMode,
+        currentAvatarId: currentAvatarId
       });
     }
-  }, [avatarPath, avatarVisible, avatarScale, isSpeaking, isThinking, isAvatarMode]);
+  }, [avatarPath, avatarVisible, avatarScale, isSpeaking, isThinking, isAvatarMode, sleepTimeout, autoBlink, developerMode, currentAvatarId]);
 
   // Supplementary sync for developerMode
   useEffect(() => {
@@ -1630,6 +1704,7 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
           <div className="relative">
             <AvatarRenderer
               avatarData={avatarData}
+              avatarId={currentAvatarId || undefined}
               isSpeaking={isSpeaking}
               isThinking={isThinking}
               scale={avatarScale}
@@ -1640,23 +1715,30 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
               debugPattern={debugPattern}
               onImageLoaded={(dims) => {
                 setImageDimensions(dims);
-                // Auto-scale if new avatar path
-                if (avatarPath && avatarPath !== lastAutoScaledPath.current) {
+                // Auto-scale if new avatar path/ID. 
+                // Using currentAvatarId allows auto-scaling when switching installed avatars even if path variable is static.
+                // We use avatarPath OR currentAvatarId as the identifier.
+                const currentIdentifier = currentAvatarId || avatarPath;
+
+                if (currentIdentifier && currentIdentifier !== lastAutoScaledPath.current) {
                   const targetHeight = 500;
+                  // If image is very large, scale it down
                   if (dims.height > targetHeight) {
                     const newScale = parseFloat((targetHeight / dims.height).toFixed(2));
                     setAvatarScale(newScale);
+                    if (window.electronAPI.syncAvatarScale) window.electronAPI.syncAvatarScale(newScale);
                   } else {
-                    // Optional: Reset to 1.0 if small enough? No, respect user.
-                    // But for NEW avatar, maybe default to 1.0?
+                    // Start new avatars at 1.0 if they aren't huge
                     setAvatarScale(1.0);
+                    if (window.electronAPI.syncAvatarScale) window.electronAPI.syncAvatarScale(1.0);
                   }
-                  lastAutoScaledPath.current = avatarPath;
+                  lastAutoScaledPath.current = currentIdentifier;
                 }
               }}
               onPositionChange={() => { }}
               isSleeping={isSleeping}
               onActivity={resetIdleTimer}
+              autoBlink={autoBlink}
             />
 
             {/* Debug UI Overlay */}
@@ -1716,7 +1798,8 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     apiKey, geminiApiKey, geminiModelName, groqApiKey, openaiApiKey, isClipboardEnabled, themeColor, provider, localBaseUrl, localModelName, openaiBaseUrl, openaiModelName, targetLanguage, skinId, logDirectory, systemPrompt, additionalPrompt,
     ttsEnabled, ttsProvider, ttsVoice, ttsSummaryPrompt, ttsSummaryThreshold,
     inputDeviceId, wakeWord, voiceInputEnabled, transcriptionProvider, wakeWordTimeout, developerMode,
-    avatarVisible, avatarScale, avatarPosition, avatarData
+    avatarVisible, avatarScale, avatarPosition, avatarData, currentAvatarId,
+    sleepTimeout, alwaysOnTop, autoBlink
   };
 
   return (
@@ -1785,8 +1868,9 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
         <SettingsModal
           onClose={() => setShowSettings(false)}
           settings={settingsObj}
-          onUpdate={handleSettingsUpdate}
+          onSettingsChange={handleSettingsChange}
           appVersion={appVersion}
+          onSelectAvatar={switchInstalledAvatar}
         />
       )}
     </div>

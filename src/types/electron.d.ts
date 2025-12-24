@@ -29,8 +29,15 @@ export interface ElectronAPI {
     getInstalledAvatars: () => Promise<{ id: string, name: string, path: string }[]>;
     loadInstalledAvatar: (avatarId: string) => Promise<{ avatarId: string, modelData: any }>;
     deleteAvatar: (avatarId: string) => Promise<boolean>;
+    installUkagakaGhost: () => Promise<string | null>;
     syncAvatarScale: (scale: number) => void;
     onAvatarScaleSync: (callback: (scale: number) => void) => () => void;
+    getUkagakaCostumes: (avatarId: string) => Promise<{ id: number; name: string; category: string; default: boolean }[]>;
+    setUkagakaCostume: (avatarId: string, enabledBindIds: number[]) => Promise<boolean>;
+    showCostumeMenu: (avatarId: string, currentBinds: number[]) => void;
+    onCostumeChanged: (callback: (binds: number[]) => void) => () => void;
+    onReloadAvatarImage: (callback: () => void) => () => void;
+    onAvatarLoading: (callback: (isLoading: boolean) => void) => () => void;
 }
 
 declare global {

@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loadInstalledAvatar: (avatarId) => ipcRenderer.invoke('load-installed-avatar', avatarId),
     getInstalledAvatars: () => ipcRenderer.invoke('get-installed-avatars'),
     deleteAvatar: (avatarId) => ipcRenderer.invoke('delete-avatar', avatarId),
+    installUkagakaGhost: () => ipcRenderer.invoke('install-ukagaka-ghost'),
     updateAvatarState: (state) => ipcRenderer.send('update-avatar-state', state),
     onAvatarStateUpdate: (callback) => {
         const subscription = (_event, state) => callback(state);
@@ -53,4 +54,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.on('avatar-scale-sync', subscription);
         return () => ipcRenderer.removeListener('avatar-scale-sync', subscription);
     },
+    getUkagakaCostumes: (avatarId) => ipcRenderer.invoke('ukagaka-get-costumes', avatarId),
+    setUkagakaCostume: (avatarId, enabledBindIds) => ipcRenderer.invoke('ukagaka-set-costume', avatarId, enabledBindIds),
+    showCostumeMenu: (avatarId, currentBinds) => ipcRenderer.send('show-costume-menu', avatarId, currentBinds),
+    onCostumeChanged: (callback) => {
+        const subscription = (_event, binds) => callback(binds);
+        ipcRenderer.on('avatar-costume-changed', subscription);
+        return () => ipcRenderer.removeListener('avatar-costume-changed', subscription);
+    },
+    onReloadAvatarImage: (callback) => {
+        const subscription = () => callback();
+        ipcRenderer.on('reload-avatar-image', subscription);
+        return () => ipcRenderer.removeListener('reload-avatar-image', subscription);
+    },
+    onAvatarLoading: (callback) => {
+        const subscription = (_event, isLoading) => callback(isLoading);
+        ipcRenderer.on('avatar-loading', subscription);
+        return () => ipcRenderer.removeListener('avatar-loading', subscription);
+    },
+    moveAvatarWindow: (dx, dy) => ipcRenderer.send('move-avatar-window', { dx, dy }),
 });

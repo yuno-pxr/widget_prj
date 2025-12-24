@@ -415,6 +415,28 @@ export const SettingsModal = ({ onClose, settings, onSettingsChange, onSelectAva
                                         <div className="text-[10px] text-white/40">Supported: .emgl, .zip</div>
                                     </div>
 
+                                    {/* Ghost Import (Ukagaka) */}
+                                    <div className="pt-2 border-t border-white/5">
+                                        <Label>Import Ukagaka Ghost</Label>
+                                        <div className="flex gap-2 mt-1">
+                                            <button
+                                                onClick={async () => {
+                                                    if (window.electronAPI && window.electronAPI.installUkagakaGhost) {
+                                                        const newAvatarId = await window.electronAPI.installUkagakaGhost();
+                                                        if (newAvatarId) {
+                                                            alert(`Ghost installed: ${newAvatarId}`);
+                                                            fetchInstalledAvatars();
+                                                        }
+                                                    }
+                                                }}
+                                                className="flex-1 py-1.5 bg-pink-600 hover:bg-pink-500 text-white text-xs font-medium rounded transition-colors flex items-center justify-center gap-2"
+                                            >
+                                                <Layers size={14} /> Import .nar
+                                            </button>
+                                        </div>
+                                        <div className="text-[10px] text-white/40 mt-1">Supports standard Ukagaka ghosts (.nar). This feature is experimental.</div>
+                                    </div>
+
                                     {/* Scale Slider */}
                                     <div className="space-y-2">
                                         <div className="flex justify-between">

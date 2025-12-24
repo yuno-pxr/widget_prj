@@ -47,13 +47,15 @@ export const AvatarRenderer = ({
     isSleeping,
     debugPattern,
     autoBlink = true,
-    avatarId
+    avatarId,
+    onDragDelta
 }: AvatarRendererProps & {
     developerMode?: boolean;
     debugPattern?: string | null;
     onActivity?: () => void;
     autoBlink?: boolean;
     avatarId?: string;
+    onDragDelta?: (dx: number, dy: number) => void;
 }) => {
 
     // State
@@ -165,11 +167,21 @@ export const AvatarRenderer = ({
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-        if (!isDragging || !onPositionChange) return;
-        onPositionChange({
-            x: e.clientX - dragOffset.current.x,
-            y: e.clientY - dragOffset.current.y
-        });
+        if (!isDragging) return;
+
+        // JS Drag Delta mode (for moving window)
+        if (onDragDelta) {
+            onDragDelta(e.movementX, e.movementY);
+            return;
+        }
+
+        // Standard props position update
+        if (onPositionChange) {
+            onPositionChange({
+                x: e.clientX - dragOffset.current.x,
+                y: e.clientY - dragOffset.current.y
+            });
+        }
     };
 
     const handleMouseUp = () => {
@@ -191,31 +203,95 @@ export const AvatarRenderer = ({
     }, [isDragging]);
 
 
+    // Modulate blink to be open if no avatar data
+    // ... (existing blink logic above)
+
+    // Costume & Reload State
+    const [imageVersion, setImageVersion] = useState(0);
+    const [activeBinds, setActiveBinds] = useState<number[]>([]);
+
+    // Load initial Binds
+    useEffect(() => {
+        if (!avatarId) return;
+
+        const loadBinds = async () => {
+            const storageKey = `ukagaka_binds_${avatarId}`;
+            const stored = localStorage.getItem(storageKey);
+
+            if (stored) {
+                try {
+                    setActiveBinds(JSON.parse(stored));
+                    return;
+                } catch (e) {
+                    console.error('Failed to parse stored binds', e);
+                }
+            }
+
+            // Fallback to defaults
+            try {
+                const costumes = await window.electronAPI.getUkagakaCostumes(avatarId);
+                const defaults = costumes.filter((c: any) => c.default).map((c: any) => c.id);
+                setActiveBinds(defaults);
+            } catch (e) {
+                console.error('Failed to fetch costumes', e);
+            }
+        };
+
+        loadBinds();
+    }, [avatarId]);
+
+    // Listeners for Costume Changes
+    useEffect(() => {
+        if (!window.electronAPI) return;
+
+        const removeCostumeListener = window.electronAPI.onCostumeChanged((newBinds) => {
+            setActiveBinds(newBinds);
+            if (avatarId) {
+                localStorage.setItem(`ukagaka_binds_${avatarId}`, JSON.stringify(newBinds));
+            }
+        });
+
+        const removeReloadListener = window.electronAPI.onReloadAvatarImage(() => {
+            console.log('Reloading avatar image...');
+            setImageVersion(v => v + 1);
+        });
+
+        return () => {
+            removeCostumeListener();
+            removeReloadListener();
+        };
+    }, [avatarId]);
+
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        if (avatarId && window.electronAPI.showCostumeMenu) {
+            window.electronAPI.showCostumeMenu(avatarId, activeBinds);
+        }
+    };
+
+
     if (!visible || !avatarData) return null;
 
     // Resolve Image
     let displayPattern = debugPattern || currentPattern;
+    // ... (thinking/sleeping override logic)
     if (!debugPattern && isThinking && !isSpeaking) {
-        // Find a thinking pattern if possible, else close eyes
         const thinkingKeys = Object.keys(avatarData.mapping).filter(k => k.includes('think'));
         if (thinkingKeys.length > 0) {
             displayPattern = thinkingKeys[0];
         } else {
-            displayPattern = 'idle.neutral'; // Fallback to neutral but force eyes closed via logic below
+            displayPattern = 'idle.neutral';
         }
     } else if (!debugPattern && isSleeping && !isSpeaking) {
-        // Find a sleeping pattern if possible
         const sleepKeys = Object.keys(avatarData.mapping).filter(k => k.includes('sleep'));
         if (sleepKeys.length > 0) {
             displayPattern = sleepKeys[0];
         }
-        // If no sleep pattern, keeps current pattern (idle) but blinking logic forces eyes closed
     }
 
     const mapping = avatarData.mapping[displayPattern] || Object.values(avatarData.mapping)[0];
     if (!mapping) return null;
 
-    // Helper
     // Helper
     const getPath = (key: string) => {
         if (!mapping) return null;
@@ -225,16 +301,13 @@ export const AvatarRenderer = ({
 
         // Use ID if available, otherwise fallback to 'current' logic
         const id = avatarId || 'current';
-        return `avatar://${id}/${assetPath}`;
+        return `avatar://${id}/${assetPath}?v=${imageVersion}`;
     };
 
-    // Fallback: If 'base' is missing, use the first available value in the mapping
+    // ... (image resolution logic)
+    // Fallback logic SAME as before but using updated getPath
     let imageUrl = getPath('base');
     if (!imageUrl && mapping) {
-        // Find first valid string value
-        // This part needs to be updated to reflect the new `getPath` signature and `avatarData.mapping` structure
-        // For now, it's left as is, assuming `mapping` might still contain direct paths for fallback,
-        // or that `getPath` will be called with appropriate pattern keys and frame indices.
         for (const key of ['mouthClosed', 'mouthOpen', 'eyesClosed', 'mouthOpenEyesClosed'] as const) {
             const p = getPath(key);
             if (p) {
@@ -245,7 +318,7 @@ export const AvatarRenderer = ({
     }
 
     const effectiveBlinkState = (isThinking && !isSpeaking) || (isSleeping && !isSpeaking) ? 'closed' : blinkState;
-    const effectiveMouthOpen = isSpeaking ? (mouthOpenState) : false; // If speaking, use modulated state.
+    const effectiveMouthOpen = isSpeaking ? (mouthOpenState) : false;
 
     if (effectiveMouthOpen) {
         if (effectiveBlinkState === 'closed') {
@@ -280,6 +353,7 @@ export const AvatarRenderer = ({
             className={`z-0 pointer-events-auto select-none ${!draggableWindow ? 'fixed' : ''}`}
             style={containerStyle}
             onMouseDown={handleMouseDown}
+            onContextMenu={handleContextMenu}
         >
             {imageUrl ? (
                 <img

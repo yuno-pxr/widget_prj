@@ -409,6 +409,201 @@ ipcMain.handle('select-file', async (event, options) => {
     return result.filePaths[0];
 });
 
+// Ukagaka Import Handler
+const UkagakaPackageLoader = require('./ukagaka/UkagakaPackageLoader.cjs');
+const UkagakaAvatarAdapter = require('./ukagaka/UkagakaAvatarAdapter.cjs');
+
+ipcMain.handle('install-ukagaka-ghost', async (event) => {
+    try {
+        console.log('[IPC] install-ukagaka-ghost triggered');
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openFile'],
+            filters: [
+                { name: 'Ukagaka Ghost Package', extensions: ['nar', 'zip'] }
+            ]
+        });
+
+        if (result.canceled || result.filePaths.length === 0) {
+            return null; // Canceled
+        }
+
+        const filePath = result.filePaths[0];
+        console.log('[IPC] Selected Ukagaka Package:', filePath);
+
+        // 1. Load Package
+        const loader = new UkagakaPackageLoader(filePath);
+        const packageInfo = await loader.load();
+
+        if (!packageInfo || (!packageInfo.hasShell && packageInfo.shellDirs.length === 0)) {
+            throw new Error('No valid shell found in the package.');
+        }
+
+        // Use the first detected shell directory
+        const shellDir = packageInfo.shellDirs[0];
+        console.log('[IPC] Using shell directory:', shellDir);
+
+        // 2. Convert and Install
+        // We use the default avatar cache directory
+        const adapter = new UkagakaAvatarAdapter(AVATAR_CACHE_DIR);
+        // Pass extractPath (from loader) and shellDir
+        // Note: shellDir is absolute path from loader analysis, so it works directly
+        const avatarId = await adapter.convertAndInstall(loader.extractPath, shellDir);
+
+        console.log('[IPC] Ukagaka Ghost installed successfully:', avatarId);
+        return avatarId;
+
+    } catch (e) {
+        console.error('[IPC] Failed to install Ukagaka ghost:', e);
+        throw e;
+    }
+});
+
+ipcMain.handle('ukagaka-get-costumes', async (event, avatarId) => {
+    try {
+        if (!avatarId) throw new Error('No avatar ID provided');
+        const safeId = path.basename(avatarId);
+        const avatarDir = path.join(AVATAR_CACHE_DIR, safeId);
+        const modelPath = path.join(avatarDir, 'model.json');
+
+        if (!fs.existsSync(modelPath)) {
+            throw new Error(`Avatar not found: ${avatarId}`);
+        }
+
+        const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
+        // Return costumes list or empty
+        return modelData.meta && modelData.meta.costumes ? modelData.meta.costumes : [];
+    } catch (e) {
+        console.error('Failed to get costumes:', e);
+        throw e;
+    }
+});
+
+ipcMain.handle('ukagaka-set-costume', async (event, avatarId, enabledBindIds) => {
+    try {
+        console.log(`[IPC] ukagaka-set-costume: ${avatarId} -> ${enabledBindIds}`);
+        if (!avatarId) throw new Error('No avatar ID provided');
+        const safeId = path.basename(avatarId);
+        const avatarDir = path.join(AVATAR_CACHE_DIR, safeId);
+
+        // Recompose
+        // We reuse the adapter class (it's stateless mostly, except internal require)
+        // Check if we need to instantiate it
+        const adapter = new UkagakaAvatarAdapter(AVATAR_CACHE_DIR);
+        await adapter.recompose(avatarDir, enabledBindIds);
+
+        // Return success
+        return true;
+    } catch (e) {
+        console.error('Failed to set costume:', e);
+        throw e;
+    }
+});
+
+
+
+ipcMain.on('show-costume-menu', (event, avatarId, currentBinds) => {
+    // 1. Load Costumes
+    try {
+        if (!avatarId) return;
+
+        // Ensure currentBinds is array
+        if (!Array.isArray(currentBinds)) currentBinds = [];
+
+        const safeId = path.basename(avatarId);
+        const avatarDir = path.join(AVATAR_CACHE_DIR, safeId);
+        const modelPath = path.join(avatarDir, 'model.json');
+
+        if (!fs.existsSync(modelPath)) return;
+        const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
+        const costumes = modelData.meta && modelData.meta.costumes ? modelData.meta.costumes : [];
+
+        if (costumes.length === 0) return;
+
+        // Group by category
+        const groups = {};
+        costumes.forEach(c => {
+            const cat = c.category || 'General';
+            if (!groups[cat]) groups[cat] = [];
+            groups[cat].push(c);
+        });
+
+        // Build Template
+        const template = [];
+
+        // Add Header
+        template.push({ label: 'Costumes', enabled: false });
+        template.push({ type: 'separator' });
+
+        for (const [cat, items] of Object.entries(groups)) {
+            template.push({ label: cat, enabled: false }); // Category Header
+
+            items.forEach(c => {
+                template.push({
+                    label: c.name,
+                    type: 'checkbox',
+                    checked: currentBinds.includes(c.id),
+                    click: async () => {
+                        // Toggle logic
+                        let newBinds = [...currentBinds];
+                        if (newBinds.includes(c.id)) {
+                            newBinds = newBinds.filter(id => id !== c.id);
+                        } else {
+                            newBinds.push(c.id);
+                        }
+
+                        // Ethical Guard (Native Menu Side)
+                        // If no costumes left?
+                        if (newBinds.length === 0) {
+                            // Force back or warn?
+                            // Re-enable default?
+                            // Just check if result has ANY costumes
+                            // Simple guard: If ALL items in this category are OFF and category is "Costume"?
+                            // Just apply logic and let adapter handle fallback?
+                            // Adapter has guard: if 0 binds, revert to defaults.
+                        }
+
+                        // Apply
+                        try {
+                            const win = BrowserWindow.fromWebContents(event.sender);
+                            if (win) win.webContents.send('avatar-loading', true); // Show loading spinner if possible
+
+                            const adapter = new UkagakaAvatarAdapter(AVATAR_CACHE_DIR);
+                            // Need to call recompose
+                            // Note: recompose is instance method
+                            await adapter.recompose(avatarDir, newBinds);
+
+                            // Notify Renderer to update UI state
+                            if (win) {
+                                win.webContents.send('avatar-costume-changed', newBinds);
+                                // Also trigger reload of image?
+                                // The 'avatar-state-updated' might trigger re-render if we change query param?
+                                // Or just reliable file watching?
+                                // Let's explicitly ask renderer to reload image
+                                win.webContents.send('reload-avatar-image');
+                                win.webContents.send('avatar-loading', false);
+                            }
+                        } catch (e) {
+                            console.error('Failed to change costume:', e);
+                        }
+                    }
+                });
+            });
+            template.push({ type: 'separator' });
+        }
+
+        const menu = Menu.buildFromTemplate(template);
+        // Popup at cursor
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+            menu.popup({ window: win });
+        }
+
+    } catch (e) {
+        console.error('Failed to show costume menu:', e);
+    }
+});
+
+// Existing load-avatar handler...
 ipcMain.handle('load-avatar', async (event, filePath) => {
     try {
         console.log('Loading avatar from:', filePath);
@@ -578,7 +773,13 @@ app.whenReady().then(async () => {
 
     // Register avatar protocol
     protocol.registerFileProtocol('avatar', (request, callback) => {
-        const url = request.url.replace('avatar://', '');
+        let url = request.url.replace('avatar://', '');
+
+        // Strip query params
+        const qIndex = url.indexOf('?');
+        if (qIndex !== -1) {
+            url = url.substring(0, qIndex);
+        }
         // New URL Structure: avatar://<avatarId>/path/to/asset.png
 
         try {
@@ -620,6 +821,14 @@ app.whenReady().then(async () => {
 app.on('will-quit', () => {
     // Unregister all shortcuts.
     globalShortcut.unregisterAll();
+});
+
+// --- IPC for Moving Avatar Window (JS-based Drag) ---
+ipcMain.on('move-avatar-window', (event, { dx, dy }) => {
+    if (avatarWindow && !avatarWindow.isDestroyed()) {
+        const [x, y] = avatarWindow.getPosition();
+        avatarWindow.setPosition(x + Math.round(dx), y + Math.round(dy));
+    }
 });
 
 app.on('window-all-closed', () => {

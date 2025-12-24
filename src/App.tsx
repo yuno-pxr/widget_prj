@@ -1698,7 +1698,7 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
     return (
       <div
         className={`w-screen h-screen overflow-hidden pointer-events-auto ${developerMode ? 'border-2 border-red-500' : ''}`}
-        style={{ background: 'transparent', WebkitAppRegion: 'drag' } as any}
+        style={{ background: 'transparent' }}
       >
         {avatarVisible && avatarData && (
           <div className="relative">
@@ -1710,7 +1710,12 @@ Instruction: Summarize the input text concisely in ${targetLanguage}.
               scale={avatarScale}
               position={avatarPosition}
               visible={avatarVisible}
-              draggableWindow={true}
+              draggableWindow={false} // Enable JS drag logic
+              onDragDelta={(dx, dy) => {
+                if (window.electronAPI.moveAvatarWindow) {
+                  window.electronAPI.moveAvatarWindow(dx, dy);
+                }
+              }}
               developerMode={developerMode}
               debugPattern={debugPattern}
               onImageLoaded={(dims) => {

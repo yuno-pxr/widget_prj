@@ -13,7 +13,16 @@ body {
   /* No scrollbars */
   user-select: none;
   /* Disable text selection by default */
+  pointer-events: auto !important;
+  /* Ensure clicks are captured */
+  -webkit-app-region: no-drag !important;
+  /* FORCE no-drag global */
 }
+
+/* UNIVERSAL RESET: Prevent drag regions anywhere */
+/* * {
+  -webkit-app-region: no-drag !important;
+} */
 
 #root {
   height: 100%;

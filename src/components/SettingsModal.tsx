@@ -55,7 +55,7 @@ export const SettingsModal = ({ onClose, settings, onSettingsChange, onSelectAva
     // VoiceVox Speaker State
     const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<{ name: string, styles: { name: string, id: number }[] }[]>([]);
     const [voicevoxError, setVoicevoxError] = useState('');
-    const [installedAvatars, setInstalledAvatars] = useState<{ id: string, name: string, path: string }[]>([]);
+    const [installedAvatars, setInstalledAvatars] = useState<{ id: string, name: string, path: string, type?: string }[]>([]);
 
     const fetchVoicevoxSpeakers = async () => {
         setVoicevoxError('');
@@ -352,38 +352,48 @@ export const SettingsModal = ({ onClose, settings, onSettingsChange, onSelectAva
                                         {installedAvatars.length === 0 ? (
                                             <div className="text-xs text-white/30 text-center py-2">No avatars installed</div>
                                         ) : (
-                                            installedAvatars.map(avatar => (
-                                                <div
-                                                    key={avatar.id}
-                                                    className={`flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${localSettings.currentAvatarId === avatar.id ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-white/5 hover:bg-white/10'}`}
-                                                    onClick={() => onSelectAvatar && onSelectAvatar(avatar.id)}
-                                                >
-                                                    <span className="text-xs text-white/80 select-none">{avatar.name}</span>
-                                                    <div className="flex gap-2">
-                                                        {localSettings.currentAvatarId === avatar.id && (
-                                                            <span className="text-[10px] text-green-400 bg-green-400/10 px-1 rounded">Active</span>
-                                                        )}
-                                                        <button
-                                                            onClick={async (e) => {
-                                                                e.stopPropagation(); // Prevent selection when deleting
-                                                                // Use local component state or handler defined above
-                                                                if (confirm('Are you sure you want to delete this avatar?')) {
-                                                                    if (window.electronAPI && window.electronAPI.deleteAvatar) {
-                                                                        const success = await window.electronAPI.deleteAvatar(avatar.id);
-                                                                        if (success) {
-                                                                            fetchInstalledAvatars();
+                                            installedAvatars.map(avatar => {
+                                                const type = avatar.type || 'EMG';
+                                                let badgeColor = 'bg-blue-400/10 text-blue-400'; // EMG
+                                                if (type === 'Ukagaka') badgeColor = 'bg-pink-400/10 text-pink-400';
+                                                if (type === 'VRM') badgeColor = 'bg-green-400/10 text-green-400';
+
+                                                return (
+                                                    <div
+                                                        key={avatar.id}
+                                                        className={`flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${localSettings.currentAvatarId === avatar.id ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-white/5 hover:bg-white/10'}`}
+                                                        onClick={() => onSelectAvatar && onSelectAvatar(avatar.id)}
+                                                    >
+                                                        <div className="flex items-center gap-2 overflow-hidden">
+                                                            <span className={`text-[9px] px-1 rounded border border-white/5 ${badgeColor}`}>{type}</span>
+                                                            <span className="text-xs text-white/80 select-none truncate">{avatar.name}</span>
+                                                        </div>
+                                                        <div className="flex gap-2 shrink-0">
+                                                            {localSettings.currentAvatarId === avatar.id && (
+                                                                <span className="text-[10px] text-green-400 bg-green-400/10 px-1 rounded">Active</span>
+                                                            )}
+                                                            <button
+                                                                onClick={async (e) => {
+                                                                    e.stopPropagation(); // Prevent selection when deleting
+                                                                    // Use local component state or handler defined above
+                                                                    if (confirm('Are you sure you want to delete this avatar?')) {
+                                                                        if (window.electronAPI && window.electronAPI.deleteAvatar) {
+                                                                            const success = await window.electronAPI.deleteAvatar(avatar.id);
+                                                                            if (success) {
+                                                                                fetchInstalledAvatars();
+                                                                            }
                                                                         }
                                                                     }
-                                                                }
-                                                            }}
-                                                            className="text-white/40 hover:text-red-400"
-                                                            title="Delete"
-                                                        >
-                                                            <X size={12} />
-                                                        </button>
+                                                                }}
+                                                                className="text-white/40 hover:text-red-400"
+                                                                title="Delete"
+                                                            >
+                                                                <X size={12} />
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))
+                                                );
+                                            })
                                         )}
                                     </div>
                                 </div>
@@ -417,7 +427,7 @@ export const SettingsModal = ({ onClose, settings, onSettingsChange, onSelectAva
 
                                     {/* Ghost Import (Ukagaka) */}
                                     <div className="pt-2 border-t border-white/5">
-                                        <Label>Import Ukagaka Ghost</Label>
+                                        <Label>Import Avatar</Label>
                                         <div className="flex gap-2 mt-1">
                                             <button
                                                 onClick={async () => {
@@ -433,8 +443,22 @@ export const SettingsModal = ({ onClose, settings, onSettingsChange, onSelectAva
                                             >
                                                 <Layers size={14} /> Import .nar
                                             </button>
+                                            <button
+                                                onClick={async () => {
+                                                    if (window.electronAPI && (window.electronAPI as any).installVRM) {
+                                                        const newAvatarId = await (window.electronAPI as any).installVRM();
+                                                        if (newAvatarId) {
+                                                            alert(`VRM installed: ${newAvatarId}`);
+                                                            fetchInstalledAvatars();
+                                                        }
+                                                    }
+                                                }}
+                                                className="flex-1 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-medium rounded transition-colors flex items-center justify-center gap-2"
+                                            >
+                                                <Monitor size={14} /> Import VRM
+                                            </button>
                                         </div>
-                                        <div className="text-[10px] text-white/40 mt-1">Supports standard Ukagaka ghosts (.nar). This feature is experimental.</div>
+                                        <div className="text-[10px] text-white/40 mt-1">Supports Ukagaka (.nar) and VRM models.</div>
                                     </div>
 
                                     {/* Scale Slider */}

@@ -25,6 +25,7 @@ export interface ElectronAPI {
     onAvatarStateUpdate: (callback: (state: any) => void) => () => void;
     getAvatarState: () => Promise<any>;
     resizeAvatarWindow: (width: number, height: number) => void;
+    moveAvatarWindow: (dx: number, dy: number) => void;
     setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
     getInstalledAvatars: () => Promise<{ id: string, name: string, path: string }[]>;
     loadInstalledAvatar: (avatarId: string) => Promise<{ avatarId: string, modelData: any }>;
@@ -38,6 +39,7 @@ export interface ElectronAPI {
     onCostumeChanged: (callback: (binds: number[]) => void) => () => void;
     onReloadAvatarImage: (callback: () => void) => () => void;
     onAvatarLoading: (callback: (isLoading: boolean) => void) => () => void;
+    onToggleCameraControl: (callback: () => void) => () => void;
 }
 
 declare global {

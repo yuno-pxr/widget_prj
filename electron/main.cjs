@@ -1,7 +1,12 @@
-const { app, BrowserWindow, ipcMain, clipboard, dialog, Tray, Menu, globalShortcut, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, dialog, Tray, Menu, globalShortcut, nativeImage, protocol } = require('electron');
 const path = require('path');
 const dataManager = require('./dataManager.cjs');
 const skinManager = require('./skinManager.cjs');
+
+// Register Privileged Schemes for Avatar Protocol (Must be done before app.ready)
+protocol.registerSchemesAsPrivileged([
+    { scheme: 'avatar', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }
+]);
 
 let lastClipboardText = '';
 let clipboardInterval = null;
@@ -77,7 +82,11 @@ function createAvatarWindow() {
         hasShadow: false,
         alwaysOnTop: true,
         skipTaskbar: true,
-        resizable: true, // Allow resizing via code if needed, but mainly controlled by content
+        transparent: true, // Restore transparency
+        // backgroundColor: '#1a1a1a', // Removed opaque background
+        resizable: false, // Prevent user resizing (we control it via code)
+        maximizable: false, // Prevent maximizing
+        // type: 'toolbar', // Removed as it may cause input issues
         webPreferences: {
             preload: preloadPath,
             nodeIntegration: false,
@@ -100,7 +109,11 @@ function createAvatarWindow() {
         avatarWindow.loadURL(`${fileUrl}?mode=avatar`);
     }
 
-    avatarWindow.setIgnoreMouseEvents(false); // Make it interactable by default
+    avatarWindow.setMenu(null); // Disable default menu
+
+    // Windows Hack: Force toggle to clear "click-through" state consistently
+    avatarWindow.setIgnoreMouseEvents(true, { forward: true });
+    avatarWindow.setIgnoreMouseEvents(false);
 
     avatarWindow.on('closed', () => {
         avatarWindow = null;
@@ -133,13 +146,30 @@ ipcMain.on('resize-avatar-window', (event, { width, height }) => {
     }
 });
 
+// Missing handler for window movement
+ipcMain.on('move-avatar-window', (event, { dx, dy }) => {
+    if (avatarWindow && !avatarWindow.isDestroyed()) {
+        const [x, y] = avatarWindow.getPosition();
+        avatarWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
+    }
+});
+
+// IPC: Allow Avatar Window to control its own ignoreMouseEvents if needed
 // IPC: Allow Avatar Window to control its own ignoreMouseEvents if needed
 ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) win.setIgnoreMouseEvents(ignore, options);
+    if (win) {
+        if (ignore) {
+            // Forward: true allows "click-through" (events go to OS)
+            win.setIgnoreMouseEvents(true, { forward: true });
+        } else {
+            // Disable ignore means "Capture Events".
+            // Windows Hack: Force toggle to clear "click-through" state consistently
+            win.setIgnoreMouseEvents(true, { forward: true });
+            win.setIgnoreMouseEvents(false);
+        }
+    }
 });
-
-// IPC: Sync Scale from Avatar Window back to Main Window
 ipcMain.on('sync-avatar-scale', (event, scale) => {
     // Only forward to Main Window
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -239,6 +269,8 @@ function createWindow() {
             backgroundThrottling: false // Allow background processing (e.g. voice recognition)
         },
     });
+
+    mainWindow.setMenu(null); // Disable default menu
 
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
@@ -458,6 +490,53 @@ ipcMain.handle('install-ukagaka-ghost', async (event) => {
     }
 });
 
+// VRM Import Handler
+ipcMain.handle('install-vrm', async (event) => {
+    try {
+        console.log('[IPC] install-vrm triggered');
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openFile'],
+            filters: [
+                { name: 'VRM Model', extensions: ['vrm'] }
+            ]
+        });
+
+        if (result.canceled || result.filePaths.length === 0) return null;
+
+        const filePath = result.filePaths[0];
+        const fileName = path.basename(filePath);
+        // Use timestamp to assume uniqueness
+        const avatarId = `vrm-${Date.now()}`;
+        const targetDir = path.join(AVATAR_CACHE_DIR, avatarId);
+
+        if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+        }
+
+        // Copy VRM file
+        const targetVrmPath = path.join(targetDir, fileName);
+        fs.copyFileSync(filePath, targetVrmPath);
+
+        // Generate model.json
+        const modelData = {
+            type: "VRM",
+            name: fileName.replace('.vrm', ''),
+            vrmFile: fileName,
+            meta: {
+                description: "Imported VRM Model"
+            }
+        };
+        fs.writeFileSync(path.join(targetDir, 'model.json'), JSON.stringify(modelData, null, 2));
+
+        console.log('[IPC] VRM installed:', avatarId);
+        return avatarId;
+
+    } catch (e) {
+        console.error('[IPC] Failed to install VRM:', e);
+        throw e;
+    }
+});
+
 ipcMain.handle('ukagaka-get-costumes', async (event, avatarId) => {
     try {
         if (!avatarId) throw new Error('No avatar ID provided');
@@ -501,7 +580,7 @@ ipcMain.handle('ukagaka-set-costume', async (event, avatarId, enabledBindIds) =>
 
 
 
-ipcMain.on('show-costume-menu', (event, avatarId, currentBinds) => {
+ipcMain.on('show-costume-menu', (event, avatarId, currentBinds, cameraControlEnabled) => {
     // 1. Load Costumes
     try {
         if (!avatarId) return;
@@ -513,90 +592,161 @@ ipcMain.on('show-costume-menu', (event, avatarId, currentBinds) => {
         const avatarDir = path.join(AVATAR_CACHE_DIR, safeId);
         const modelPath = path.join(avatarDir, 'model.json');
 
-        if (!fs.existsSync(modelPath)) return;
-        const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
-        const costumes = modelData.meta && modelData.meta.costumes ? modelData.meta.costumes : [];
+        let costumes = [];
+        if (fs.existsSync(modelPath)) {
+            const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
+            costumes = modelData.meta && modelData.meta.costumes ? modelData.meta.costumes : [];
+        }
 
-        if (costumes.length === 0) return;
 
-        // Group by category
+        // Group by category (heuristic)
+        // Strategy: Look for prefix in name (e.g. "靴, 赤", "靴下/白")
+        // Japanese specific: "カテゴリ,名前" is common
         const groups = {};
+        const ungrouped = [];
+
         costumes.forEach(c => {
-            const cat = c.category || 'General';
-            if (!groups[cat]) groups[cat] = [];
-            groups[cat].push(c);
+            let groupName = 'Other';
+            // Try splitting by comma, slash, or space (if it looks like "Category Name")
+            const separators = [',', '/', ' '];
+            let foundSep = false;
+
+            for (const sep of separators) {
+                if (c.name.includes(sep)) {
+                    const parts = c.name.split(sep);
+                    if (parts.length > 1) {
+                        groupName = parts[0].trim();
+                        // If name matches group (e.g. "Ribbon, Red"), removing group from label might is nice but optional.
+                        // label: parts.slice(1).join(sep).trim() // Keep full name for clarity in submenu?
+                    }
+                    foundSep = true;
+                    break;
+                }
+            }
+
+            if (!foundSep) {
+                // Try to match prefix if multiple items start with same string?
+                // Too complex for now. Just put in "Other" or root?
+                // Let's put in 'Misc' or Root.
+                groupName = 'Misc';
+            }
+
+            if (!groups[groupName]) groups[groupName] = [];
+            groups[groupName].push(c);
         });
 
         // Build Template
         const template = [];
 
-        // Add Header
-        template.push({ label: 'Costumes', enabled: false });
-        template.push({ type: 'separator' });
+        // Helper to apply binds
+        const applyBinds = async (newBinds) => {
+            try {
+                const win = BrowserWindow.fromWebContents(event.sender);
+                const adapter = new UkagakaAvatarAdapter(AVATAR_CACHE_DIR);
+                await adapter.recompose(avatarDir, newBinds);
+                if (win) {
+                    win.webContents.send('avatar-costume-changed', newBinds);
+                    // Force image reload
+                    win.webContents.send('reload-avatar-image');
+                }
+            } catch (e) { console.error(e); }
+        };
 
-        for (const [cat, items] of Object.entries(groups)) {
-            template.push({ label: cat, enabled: false }); // Category Header
+        // --- Camera Control Option ---
+        template.push({
+            label: 'Camera Control',
+            type: 'checkbox',
+            checked: !!cameraControlEnabled,
+            click: () => {
+                event.sender.send('toggle-camera-control');
+            }
+        });
 
-            items.forEach(c => {
-                template.push({
-                    label: c.name,
-                    type: 'checkbox',
-                    checked: currentBinds.includes(c.id),
-                    click: async () => {
-                        // Toggle logic
-                        let newBinds = [...currentBinds];
-                        if (newBinds.includes(c.id)) {
-                            newBinds = newBinds.filter(id => id !== c.id);
-                        } else {
-                            newBinds.push(c.id);
-                        }
-
-                        // Ethical Guard (Native Menu Side)
-                        // If no costumes left?
-                        if (newBinds.length === 0) {
-                            // Force back or warn?
-                            // Re-enable default?
-                            // Just check if result has ANY costumes
-                            // Simple guard: If ALL items in this category are OFF and category is "Costume"?
-                            // Just apply logic and let adapter handle fallback?
-                            // Adapter has guard: if 0 binds, revert to defaults.
-                        }
-
-                        // Apply
-                        try {
-                            const win = BrowserWindow.fromWebContents(event.sender);
-                            if (win) win.webContents.send('avatar-loading', true); // Show loading spinner if possible
-
-                            const adapter = new UkagakaAvatarAdapter(AVATAR_CACHE_DIR);
-                            // Need to call recompose
-                            // Note: recompose is instance method
-                            await adapter.recompose(avatarDir, newBinds);
-
-                            // Notify Renderer to update UI state
-                            if (win) {
-                                win.webContents.send('avatar-costume-changed', newBinds);
-                                // Also trigger reload of image?
-                                // The 'avatar-state-updated' might trigger re-render if we change query param?
-                                // Or just reliable file watching?
-                                // Let's explicitly ask renderer to reload image
-                                win.webContents.send('reload-avatar-image');
-                                win.webContents.send('avatar-loading', false);
-                            }
-                        } catch (e) {
-                            console.error('Failed to change costume:', e);
-                        }
-                    }
-                });
+        // --- Costume Options ---
+        if (costumes.length > 0) {
+            template.push({ type: 'separator' });
+            template.push({ label: 'Costumes', enabled: false });
+            template.push({
+                label: 'Reset to Defaults',
+                click: async () => {
+                    const defaults = costumes.filter(c => c.default).map(c => c.id);
+                    await applyBinds(defaults);
+                }
+            });
+            template.push({
+                label: 'Deselect All (Naked)',
+                click: async () => {
+                    await applyBinds([]);
+                }
             });
             template.push({ type: 'separator' });
-        }
+
+            // Build Groups
+            // Sort groups: Misc last
+            const sortedKeys = Object.keys(groups).sort((a, b) => {
+                if (a === 'Misc') return 1;
+                if (b === 'Misc') return -1;
+                return a.localeCompare(b);
+            });
+
+            sortedKeys.forEach(groupName => {
+                const items = groups[groupName];
+
+                // Submenu items
+                const submenu = [];
+
+                // Helper for group batch action
+                const getGroupIds = () => items.map(c => c.id);
+
+                submenu.push({
+                    label: 'Select All',
+                    click: async () => {
+                        const groupIds = getGroupIds();
+                        // Add all group IDs to current
+                        const newBinds = [...new Set([...currentBinds, ...groupIds])];
+                        await applyBinds(newBinds);
+                    }
+                });
+                submenu.push({
+                    label: 'Deselect All',
+                    click: async () => {
+                        const groupIds = getGroupIds();
+                        // Remove all group IDs
+                        const newBinds = currentBinds.filter(id => !groupIds.includes(id));
+                        await applyBinds(newBinds);
+                    }
+                });
+                submenu.push({ type: 'separator' });
+
+                items.forEach(c => {
+                    submenu.push({
+                        label: c.name,
+                        type: 'checkbox',
+                        checked: currentBinds.includes(c.id),
+                        click: async () => {
+                            let newBinds = [...currentBinds];
+                            if (newBinds.includes(c.id)) {
+                                newBinds = newBinds.filter(id => id !== c.id);
+                            } else {
+                                newBinds.push(c.id);
+                            }
+                            await applyBinds(newBinds);
+                        }
+                    });
+                });
+
+                template.push({
+                    label: groupName,
+                    submenu: submenu
+                });
+            });
+        } // Close if (costumes.length > 0)
 
         const menu = Menu.buildFromTemplate(template);
-        // Popup at cursor
+        // Show Context Menu
+        // We use the BrowserWindow to popup
         const win = BrowserWindow.fromWebContents(event.sender);
-        if (win) {
-            menu.popup({ window: win });
-        }
+        if (win) menu.popup({ window: win });
 
     } catch (e) {
         console.error('Failed to show costume menu:', e);
@@ -663,10 +813,22 @@ ipcMain.handle('get-installed-avatars', async () => {
                 if (fs.existsSync(modelPath)) {
                     try {
                         const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf8'));
+
+                        // Infer Type
+                        let type = modelData.type || 'EMG'; // Default to EMG
+                        if (!modelData.type) {
+                            if (modelData.home_url || modelData.readme || entry.name.startsWith('ukagaka-')) {
+                                type = 'Ukagaka';
+                            } else if (modelData.vrmFile) {
+                                type = 'VRM';
+                            }
+                        }
+
                         avatars.push({
                             id: entry.name,
                             name: modelData.name || entry.name,
-                            path: modelPath // Not strictly needed for renderer but helpful for debug
+                            type: type, // Return type
+                            path: modelPath
                         });
                     } catch (e) {
                         // Ignore invalid JSON
@@ -720,7 +882,7 @@ ipcMain.handle('load-installed-avatar', async (event, avatarId) => {
     }
 });
 
-const { protocol } = require('electron');
+
 
 app.whenReady().then(async () => {
     console.log('App Ready');

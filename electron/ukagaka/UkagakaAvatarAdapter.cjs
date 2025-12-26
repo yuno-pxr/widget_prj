@@ -425,45 +425,14 @@ class UkagakaAvatarAdapter {
         }
 
         // 4. Generate model.json
-        // Extract Bind Groups for Costume Switching
-        const costumes = [];
-        const costumeMap = {}; // local map groupName -> { id, binds: [] }
+        // Extract Bind Groups for Costume Switching (Use parsed costumes from DescriptParser)
+        let costumeList = descript['_costumes'] || [];
 
-        for (const [key, val] of Object.entries(descript)) {
-            // sakura.bindgroup20.name,Category,Name
-            // sakura.bindgroup20.default,1
-            const match = key.match(/^sakura\.bindgroup(\d+)\.(name|default)$/);
-            if (match) {
-                const bindId = parseInt(match[1], 10);
-                const type = match[2];
+        // If no costumes found in descript.txt, try fallback or leave empty.
+        // (Costumes defined only in surfaces.txt without names in descript.txt might exist but won't be listed in menu)
+        // TODO: Scan surfaces for `animation.patternN.bind` and auto-add unknown groups?
 
-                if (!costumeMap[bindId]) {
-                    costumeMap[bindId] = { id: bindId };
-                }
-
-                if (type === 'name') {
-                    // val: "Category,Name" or just "Name"
-                    const parts = val.split(',');
-                    if (parts.length > 1) {
-                        costumeMap[bindId].category = parts[0];
-                        costumeMap[bindId].name = parts[1];
-                    } else {
-                        costumeMap[bindId].category = 'General';
-                        costumeMap[bindId].name = val;
-                    }
-                } else if (type === 'default') {
-                    costumeMap[bindId].default = (val === '1');
-                }
-            }
-        }
-
-        // Convert map to array
-        const costumeList = Object.values(costumeMap).map(c => ({
-            id: c.id,
-            category: c.category || 'Unknown',
-            name: c.name || `Costume ${c.id}`,
-            default: !!c.default
-        }));
+        console.log(`[UkagakaAvatarAdapter] Found ${costumeList.length} costumes.`);
 
         // Save parsed surfaces for fast recomposition
         const cacheData = {
